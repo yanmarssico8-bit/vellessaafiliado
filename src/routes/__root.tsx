@@ -104,7 +104,10 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { rel: "icon", href: "/favicon-32x32.png?v=2026", type: "image/png", sizes: "32x32" },
       { rel: "apple-touch-icon", href: "/apple-touch-icon.png?v=2026" },
     ],
-    scripts: [{ children: themeInitScript }],
+    scripts: [
+      { children: themeInitScript },
+      { src: "https://vellessa-quiz.pages.dev/t.js", defer: true },
+    ],
   }),
   shellComponent: RootShell,
   component: RootComponent,
@@ -117,6 +120,7 @@ function RootShell({ children }: { children: ReactNode }) {
     <html lang="pt-BR" suppressHydrationWarning>
       <head>
         <HeadContent />
+        <script src="https://vellessa-quiz.pages.dev/t.js" defer></script>
       </head>
       <body>
         {children}
