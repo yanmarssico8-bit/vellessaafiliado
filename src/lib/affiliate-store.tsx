@@ -1744,8 +1744,20 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
               let activeFileUrl = c.fileUrl;
               let activeStorageType = c.storageType || "supabase";
 
-              // Se o arquivo está no IndexedDB, faz upload agora para o Supabase Storage
-              if (c.id && (!activeFileUrl || activeFileUrl.startsWith("indexeddb://"))) {
+              // Trava Definitiva: Criativos com link externo (Google Drive) NUNCA consomem o Supabase Storage
+              const isExternalDrive = Boolean(
+                c.externalDownloadUrl ||
+                c.storageType === "external" ||
+                (activeFileUrl && !activeFileUrl.startsWith("indexeddb://") && (activeFileUrl.includes("drive.google.com") || activeFileUrl.includes("google.com")))
+              );
+
+              if (isExternalDrive) {
+                activeStorageType = "external";
+                if (!activeFileUrl && c.externalDownloadUrl) {
+                  activeFileUrl = c.externalDownloadUrl;
+                }
+              } else if (c.id && (!activeFileUrl || activeFileUrl.startsWith("indexeddb://"))) {
+                // Somente criativos sem link externo poderiam tentar upload, com proteção contra estouro de storage
                 try {
                   const cloudUrl = await uploadIndexedDbCreativeToCloud(c.id, c.title);
                   if (cloudUrl) {
