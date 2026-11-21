@@ -74,7 +74,27 @@ function AdminLayout() {
   }
 
   if (!isAuthenticated || (!isAdmin && !isTitular)) {
-    return null;
+    return (
+      <div className="flex min-h-screen w-full items-center justify-center bg-background p-4 text-center">
+        <div className="max-w-md space-y-4 animate-in fade-in duration-300">
+          <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-gold-gradient shadow-gold">
+            <Shield className="h-7 w-7 text-primary-foreground" />
+          </div>
+          <h2 className="text-xl font-bold text-foreground">Acesso Administrativo</h2>
+          <p className="text-sm text-muted-foreground">
+            Sua sessão administrativa precisa ser autenticada. Clique abaixo para entrar no painel.
+          </p>
+          <div className="pt-2">
+            <Link
+              to="/admin/login"
+              className="inline-flex items-center justify-center rounded-xl bg-gold-gradient px-6 py-2.5 text-sm font-bold text-primary-foreground shadow-gold hover:brightness-105 transition cursor-pointer"
+            >
+              Fazer Login ADM
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
