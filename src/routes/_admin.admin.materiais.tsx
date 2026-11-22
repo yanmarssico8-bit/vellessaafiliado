@@ -301,13 +301,18 @@ function AdminMateriaisPage() {
     amber: "bg-amber-500",
   };
 
-  const openNewFolderModal = (asSubfolderOf?: string | null) => {
+  const [isSavingFolder, setIsSavingFolder] = useState(false);
+
+  const openNewFolderModal = (asSubfolderOf?: unknown) => {
     setEditFolderId(null);
     setFolderName("");
     setFolderDescription("");
     setFolderColor("gold");
     setFolderDriveUrl("");
-    setFolderParentId(asSubfolderOf ?? currentFolderId ?? null);
+    const validParentId = typeof asSubfolderOf === "string" && asSubfolderOf.trim()
+      ? asSubfolderOf.trim()
+      : (typeof currentFolderId === "string" && currentFolderId.trim() ? currentFolderId.trim() : null);
+    setFolderParentId(validParentId);
     setShowFolderModal(true);
   };
 
@@ -323,25 +328,38 @@ function AdminMateriaisPage() {
 
   const handleSaveFolder = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!folderName.trim()) return;
-    if (editFolderId) {
-      await updateFolder(editFolderId, {
-        name: folderName,
-        description: folderDescription,
-        color: folderColor,
-        driveUrl: folderDriveUrl.trim() || undefined,
-        parentId: folderParentId,
-      });
-    } else {
-      await createFolder({
-        name: folderName,
-        description: folderDescription,
-        color: folderColor,
-        driveUrl: folderDriveUrl.trim() || undefined,
-        parentId: folderParentId,
-      });
+    if (!folderName.trim() || isSavingFolder) return;
+    setIsSavingFolder(true);
+    try {
+      const cleanParentId = typeof folderParentId === "string" && folderParentId.trim()
+        ? folderParentId.trim()
+        : null;
+      const cleanDrive = folderDriveUrl.trim() || undefined;
+
+      if (editFolderId) {
+        await updateFolder(editFolderId, {
+          name: folderName.trim(),
+          description: folderDescription.trim() || undefined,
+          color: folderColor,
+          driveUrl: cleanDrive,
+          parentId: cleanParentId,
+        });
+      } else {
+        await createFolder({
+          name: folderName.trim(),
+          description: folderDescription.trim() || undefined,
+          color: folderColor,
+          driveUrl: cleanDrive,
+          parentId: cleanParentId,
+        });
+      }
+      setShowFolderModal(false);
+    } catch (err) {
+      console.error("[Materiais] Erro ao salvar pasta:", err);
+      toast.error("Ocorreu um erro ao salvar a pasta. Tente novamente.");
+    } finally {
+      setIsSavingFolder(false);
     }
-    setShowFolderModal(false);
   };
 
   // ── IMPORTAÇÃO GOOGLE DRIVE EM LOTE ─────────────────────────────────────────
@@ -1195,7 +1213,7 @@ function AdminMateriaisPage() {
             </button>
             <button
               type="button"
-              onClick={openNewFolderModal}
+              onClick={() => openNewFolderModal()}
               className="inline-flex items-center gap-1.5 rounded-xl border border-gold/40 bg-card px-4 py-2 text-xs font-semibold text-gold hover:bg-gold/10 transition shadow-xs cursor-pointer"
             >
               <FolderPlus className="h-4 w-4" /> Nova Pasta
@@ -1710,16 +1728,23 @@ function AdminMateriaisPage() {
             <div className="shrink-0 flex justify-end gap-2 px-6 py-4 border-t border-white/10 bg-card/95 backdrop-blur-sm rounded-b-3xl">
               <button
                 type="button"
+                disabled={isSavingFolder}
                 onClick={() => setShowFolderModal(false)}
-                className="rounded-xl border px-4 py-2 text-xs font-semibold hover:bg-muted transition"
+                className="rounded-xl border px-4 py-2 text-xs font-semibold hover:bg-muted transition disabled:opacity-50"
               >
                 Cancelar
               </button>
               <button
                 type="submit"
-                className="rounded-xl bg-gold-gradient px-4 py-2 text-xs font-semibold text-primary-foreground shadow-gold hover:brightness-105 transition"
+                disabled={isSavingFolder}
+                className="rounded-xl bg-gold-gradient px-4 py-2 text-xs font-semibold text-primary-foreground shadow-gold hover:brightness-105 transition disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
               >
-                {editFolderId ? "Salvar Alterações" : "Criar Pasta"}
+                {isSavingFolder && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                {isSavingFolder
+                  ? "Salvando..."
+                  : editFolderId
+                  ? "Salvar Alterações"
+                  : "Criar Pasta"}
               </button>
             </div>
           </form>

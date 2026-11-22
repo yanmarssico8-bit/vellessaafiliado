@@ -3471,14 +3471,21 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
 
   // ── FOLDERS CRUD ───────────────────────────────────────────────────────────
   const createFolder = async (data: { name: string; description?: string; color?: string; icon?: string; driveUrl?: string; parentId?: string | null }) => {
+    const cleanParentId = typeof data.parentId === "string" && data.parentId.trim()
+      ? data.parentId.trim()
+      : null;
+    const cleanDriveUrl = typeof data.driveUrl === "string" && data.driveUrl.trim()
+      ? data.driveUrl.trim()
+      : undefined;
+
     const newFolder: MaterialFolder = {
       id: `folder-${Date.now()}`,
       name: data.name.trim(),
       description: data.description?.trim(),
       color: data.color || "gold",
       icon: data.icon || "Folder",
-      driveUrl: data.driveUrl?.trim() || undefined,
-      parentId: data.parentId ?? null,
+      driveUrl: cleanDriveUrl,
+      parentId: cleanParentId,
       createdAt: new Date().toISOString(),
     };
 
@@ -3500,11 +3507,22 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
 
     const updated = [...foldersList, newFolder];
     setFoldersList(updated);
-    localStorage.setItem(STORAGE_KEYS.FOLDERS, JSON.stringify(updated));
+    try {
+      localStorage.setItem(STORAGE_KEYS.FOLDERS, JSON.stringify(updated));
+    } catch (e) {
+      console.warn("[AffiliateStore] Erro ao gravar pasta no localStorage:", e);
+    }
     toast.success(`Pasta "${newFolder.name}" criada!`);
   };
 
   const updateFolder = async (id: string, data: { name?: string; description?: string; color?: string; icon?: string; driveUrl?: string; parentId?: string | null }) => {
+    const cleanParentId = data.parentId !== undefined
+      ? (typeof data.parentId === "string" && data.parentId.trim() ? data.parentId.trim() : null)
+      : undefined;
+    const cleanDriveUrl = data.driveUrl !== undefined
+      ? (typeof data.driveUrl === "string" && data.driveUrl.trim() ? data.driveUrl.trim() : "")
+      : undefined;
+
     const updated = foldersList.map((f) => {
       if (f.id !== id) return f;
       return {
@@ -3513,8 +3531,8 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
         description: data.description?.trim() ?? f.description,
         color: data.color ?? f.color,
         icon: data.icon ?? f.icon,
-        driveUrl: data.driveUrl !== undefined ? data.driveUrl.trim() : f.driveUrl,
-        parentId: data.parentId !== undefined ? data.parentId : f.parentId,
+        driveUrl: cleanDriveUrl !== undefined ? cleanDriveUrl : f.driveUrl,
+        parentId: cleanParentId !== undefined ? cleanParentId : f.parentId,
       };
     });
 
@@ -3534,7 +3552,11 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
     }
 
     setFoldersList(updated);
-    localStorage.setItem(STORAGE_KEYS.FOLDERS, JSON.stringify(updated));
+    try {
+      localStorage.setItem(STORAGE_KEYS.FOLDERS, JSON.stringify(updated));
+    } catch (e) {
+      console.warn("[AffiliateStore] Erro ao gravar pasta no localStorage:", e);
+    }
     toast.success("Pasta atualizada!");
   };
 
