@@ -263,7 +263,8 @@ export interface DriveImportItem {
   format: string;
   isVideo: boolean;
   isValid: boolean;
-  detectedKind: DriveItemType;
+  detectedKind: DriveItemType | "folder";
+  isFolder?: boolean;
 }
 
 /**
@@ -353,11 +354,11 @@ export function parseDriveImportLinks(raw: string): DriveImportItem[] {
 
     const isFolder = isDriveFolderUrl(url);
     const fileId = isFolder ? null : getDriveFileId(url);
-    const isValid = !isFolder && fileId !== null;
+    const isValid = isFolder || fileId !== null;
 
     const id = `drive-import-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 6)}`;
-    const detectedKind = isValid ? inferDriveItemKind("", url) : "unknown";
-    const isVideo = detectedKind === "video" || detectedKind === "unknown";
+    const detectedKind = isFolder ? "folder" : isValid ? inferDriveItemKind("", url) : "unknown";
+    const isVideo = !isFolder && (detectedKind === "video" || detectedKind === "unknown");
 
     items.push({
       id,
@@ -365,12 +366,13 @@ export function parseDriveImportLinks(raw: string): DriveImportItem[] {
       driveFileId: fileId || "",
       embedUrl: fileId ? getDriveEmbedUrl(fileId) : "",
       thumbnailUrl: fileId ? getDriveThumbnailUrl(fileId, 400) : "",
-      title: `Criativo ${items.length + 1}`,
-      type: isVideo ? "Reels" : "Feed",
-      format: isVideo ? "1080×1920 · Vídeo" : "1080×1080",
+      title: isFolder ? `Pasta de Criativos ${items.length + 1}` : `Criativo ${items.length + 1}`,
+      type: isFolder ? "Feed" : isVideo ? "Reels" : "Feed",
+      format: isFolder ? "Pasta Compartilhada" : isVideo ? "1080×1920 · Vídeo" : "1080×1080",
       isVideo,
       isValid,
-      detectedKind,
+      detectedKind: detectedKind as any,
+      isFolder,
     });
   });
 

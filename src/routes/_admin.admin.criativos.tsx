@@ -2500,20 +2500,29 @@ function AdminCriativosPage() {
                       >
                         {item.isValid ? (
                           <div className="flex items-start gap-3">
-                            {/* Prévia iframe Drive */}
-                            <div className="shrink-0 w-28 h-20 overflow-hidden rounded-xl border border-border/50 bg-black/40 relative">
-                              <iframe
-                                src={item.embedUrl}
-                                title={item.title}
-                                allow="autoplay"
-                                className="absolute inset-0 w-full h-full scale-[1.5] origin-center pointer-events-none"
-                                sandbox="allow-scripts allow-same-origin"
-                              />
-                              <div className="absolute inset-0 bg-black/10" />
-                              <div className="absolute bottom-1 left-1 rounded-full bg-black/85 px-1.5 py-0.5 text-[8px] font-bold text-sky-400 border border-sky-500/30">
-                                {item.isVideo ? "▶ Vídeo" : "🖼 Imagem"}
+                            {/* Prévia iframe Drive ou Ícone de Pasta */}
+                            {item.isFolder ? (
+                              <div className="shrink-0 w-28 h-20 overflow-hidden rounded-xl border border-sky-500/40 bg-sky-500/10 flex flex-col items-center justify-center gap-1.5 relative">
+                                <Folder className="h-6 w-6 text-sky-400" />
+                                <span className="text-[9px] font-bold text-sky-400 uppercase tracking-wider">
+                                  Pasta Drive
+                                </span>
                               </div>
-                            </div>
+                            ) : (
+                              <div className="shrink-0 w-28 h-20 overflow-hidden rounded-xl border border-border/50 bg-black/40 relative">
+                                <iframe
+                                  src={item.embedUrl}
+                                  title={item.title}
+                                  allow="autoplay"
+                                  className="absolute inset-0 w-full h-full scale-[1.5] origin-center pointer-events-none"
+                                  sandbox="allow-scripts allow-same-origin"
+                                />
+                                <div className="absolute inset-0 bg-black/10" />
+                                <div className="absolute bottom-1 left-1 rounded-full bg-black/85 px-1.5 py-0.5 text-[8px] font-bold text-sky-400 border border-sky-500/30">
+                                  {item.isVideo ? "▶ Vídeo" : "🖼 Imagem"}
+                                </div>
+                              </div>
+                            )}
 
                             {/* Campos editáveis */}
                             <div className="flex-1 min-w-0 space-y-2">
@@ -2567,16 +2576,16 @@ function AdminCriativosPage() {
                             </button>
                           </div>
                         ) : (
-                          /* Link inválido (pasta ou URL não reconhecida) */
+                          /* Link inválido ou URL não reconhecida */
                           <div className="flex items-center gap-3">
                             <div className="grid h-8 w-8 place-items-center rounded-lg bg-red-500/15 text-red-400 shrink-0">
                               <X className="h-4 w-4" />
                             </div>
                             <div className="flex-1 min-w-0">
-                              <p className="text-xs font-semibold text-red-400">Link inválido ou é uma pasta</p>
+                              <p className="text-xs font-semibold text-red-400">Link não reconhecido</p>
                               <p className="text-[10px] text-muted-foreground font-mono truncate">{item.originalUrl}</p>
                               <p className="text-[10px] text-red-400/70">
-                                Links de pasta não são suportados. Cole o link de cada arquivo individualmente.
+                                Certifique-se de colar um link válido do Google Drive ou Google Docs.
                               </p>
                             </div>
                             <button
