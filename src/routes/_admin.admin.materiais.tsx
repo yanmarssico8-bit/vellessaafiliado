@@ -14,6 +14,7 @@ import {
   Folder,
   FolderOpen,
   FolderPlus,
+  FolderSymlink,
   LayoutGrid,
   Link2,
   List,
@@ -50,6 +51,8 @@ import {
   parseDriveMaterialLinks,
   type DriveMaterialImportItem,
   isDriveFolderUrl,
+  isGoogleDocsUrl,
+  isGoogleSheetsUrl,
   inferMaterialKind,
 } from "@/lib/file-storage";
 
@@ -225,7 +228,31 @@ function AdminMateriaisPage() {
   };
 
   // ── ESTADO DE NAVEGAÇÃO ESPACIAL (FINDER / GOOGLE DRIVE) ────────────────────
-  const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
+  // folderStack: histórico de IDs de pasta para navegação com breadcrumb multinível
+  const [folderStack, setFolderStack] = useState<string[]>([]); // pilha de IDs de pasta
+  const currentFolderId = folderStack.length > 0 ? folderStack[folderStack.length - 1] : null;
+
+  const navigateToFolder = (folderId: string) => {
+    setFolderStack((prev) => [...prev, folderId]);
+    setSearchQuery("");
+  };
+
+  const navigateBack = () => {
+    setFolderStack((prev) => prev.slice(0, -1));
+    setSearchQuery("");
+  };
+
+  const navigateToRoot = () => {
+    setFolderStack([]);
+    setSearchQuery("");
+  };
+
+  // Compatibilidade retroativa para setCurrentFolderId direto
+  const setCurrentFolderId = (id: string | null) => {
+    if (!id) navigateToRoot();
+    else setFolderStack([id]);
+  };
+
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
 
@@ -245,6 +272,7 @@ function AdminMateriaisPage() {
   const [folderDescription, setFolderDescription] = useState("");
   const [folderColor, setFolderColor] = useState("gold");
   const [folderDriveUrl, setFolderDriveUrl] = useState("");
+  const [folderParentId, setFolderParentId] = useState<string | null>(null);
 
   const FOLDER_COLORS = [
     { label: "Ouro", value: "gold" },
@@ -273,12 +301,13 @@ function AdminMateriaisPage() {
     amber: "bg-amber-500",
   };
 
-  const openNewFolderModal = () => {
+  const openNewFolderModal = (asSubfolderOf?: string | null) => {
     setEditFolderId(null);
     setFolderName("");
     setFolderDescription("");
     setFolderColor("gold");
     setFolderDriveUrl("");
+    setFolderParentId(asSubfolderOf ?? currentFolderId ?? null);
     setShowFolderModal(true);
   };
 
@@ -288,6 +317,7 @@ function AdminMateriaisPage() {
     setFolderDescription(f.description || "");
     setFolderColor(f.color || "gold");
     setFolderDriveUrl(f.driveUrl || "");
+    setFolderParentId(f.parentId ?? null);
     setShowFolderModal(true);
   };
 
@@ -300,6 +330,7 @@ function AdminMateriaisPage() {
         description: folderDescription,
         color: folderColor,
         driveUrl: folderDriveUrl.trim() || undefined,
+        parentId: folderParentId,
       });
     } else {
       await createFolder({
@@ -307,6 +338,7 @@ function AdminMateriaisPage() {
         description: folderDescription,
         color: folderColor,
         driveUrl: folderDriveUrl.trim() || undefined,
+        parentId: folderParentId,
       });
     }
     setShowFolderModal(false);
@@ -334,15 +366,14 @@ function AdminMateriaisPage() {
     try {
       const items = parseDriveMaterialLinks(driveLinksInput);
       if (items.length === 0) {
-        toast.error("Nenhum link válido do Google Drive encontrado. Verifique os links colados.");
+        toast.error("Nenhum link válido do Google Drive, Google Docs ou Google Sheets encontrado.");
         setIsDriveProcessing(false);
         return;
       }
       setDriveImportItems(items);
-      const valids = items.filter((i) => i.isValid).length;
-      toast.success(`${valids} arquivo(s) válido(s) do Google Drive detectado(s)!`);
+      toast.success(`${items.length} recurso(s) detectado(s) e prontos para publicação!`);
     } catch {
-      toast.error("Erro ao processar links do Drive.");
+      toast.error("Erro ao processar links do Google.");
     } finally {
       setIsDriveProcessing(false);
     }
@@ -386,13 +417,14 @@ function AdminMateriaisPage() {
   };
 
   const handleDeleteFolder = (id: string, name: string) => {
-    if (
-      window.confirm(
-        `Excluir a pasta "${name}"? Os arquivos dentro dela não serão apagados, apenas movidos para a raiz geral.`
-      )
-    ) {
+    const subCount = foldersList.filter((f) => f.parentId === id).length;
+    const confirmMsg = subCount > 0
+      ? `Excluir a pasta "${name}" e suas ${subCount} subpasta(s)? Os arquivos serão movidos para a raiz geral.`
+      : `Excluir a pasta "${name}"? Os arquivos dentro dela não serão apagados, apenas movidos para a raiz geral.`;
+    if (window.confirm(confirmMsg)) {
       deleteFolder(id);
-      if (currentFolderId === id) setCurrentFolderId(null);
+      // Se estava dentro da pasta ou subpasta excluída, volta para raiz
+      if (folderStack.includes(id)) navigateToRoot();
     }
   };
 
@@ -790,6 +822,14 @@ function AdminMateriaisPage() {
 
   // ── FILTROS E CONTEXTO DE DIRETÓRIO ATUAL ──────────────────────────────────
   const currentFolder = foldersList.find((f) => f.id === currentFolderId);
+
+  // Subpastas visíveis no diretório atual
+  const displayedSubfolders = foldersList.filter((f) =>
+    currentFolderId ? f.parentId === currentFolderId : !f.parentId
+  );
+
+  // Pastas raiz (sem parentId) para exibir na visão de raiz
+  const rootFolders = foldersList.filter((f) => !f.parentId);
 
   // Arquivos visíveis de acordo com a pasta atual ou busca
   const displayedMaterials = materialsList.filter((m) => {
@@ -1218,22 +1258,47 @@ function AdminMateriaisPage() {
 
         {/* ── NAVEGAÇÃO POR BREADCRUMB (QUANDO DENTRO DE UMA PASTA) ─────────── */}
         {currentFolder && (
-          <div className="flex items-center justify-between gap-3 bg-gold/10 border border-gold/30 p-4 rounded-2xl backdrop-blur-md animate-in fade-in">
-            <div className="flex items-center gap-3 min-w-0">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-gold/10 border border-gold/30 p-4 rounded-2xl backdrop-blur-md animate-in fade-in">
+            <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-wrap">
               <button
                 type="button"
-                onClick={() => setCurrentFolderId(null)}
+                onClick={folderStack.length > 1 ? navigateBack : navigateToRoot}
                 className="inline-flex items-center gap-1.5 rounded-xl bg-card border border-gold/30 px-3 py-1.5 text-xs font-semibold text-gold hover:bg-gold/15 transition shadow-xs"
               >
                 <ArrowLeft className="h-3.5 w-3.5" />
-                <span>Voltar à Raiz</span>
+                <span>{folderStack.length > 1 ? "Voltar Nível" : "Voltar à Raiz"}</span>
               </button>
-              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <span className="hidden sm:inline">Materiais</span>
-                <ChevronRight className="h-3.5 w-3.5 text-gold" />
-                <span className="font-semibold text-foreground text-sm flex items-center gap-1.5">
-                  <FolderOpen className="h-4 w-4 text-gold" /> {currentFolder.name}
-                </span>
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground flex-wrap">
+                <button
+                  type="button"
+                  onClick={navigateToRoot}
+                  className="hover:text-gold transition cursor-pointer"
+                >
+                  Materiais
+                </button>
+                {folderStack.map((fid, idx) => {
+                  const fObj = foldersList.find((f) => f.id === fid);
+                  if (!fObj) return null;
+                  const isLast = idx === folderStack.length - 1;
+                  return (
+                    <div key={fid} className="flex items-center gap-1.5">
+                      <ChevronRight className="h-3.5 w-3.5 text-gold shrink-0" />
+                      {isLast ? (
+                        <span className="font-semibold text-foreground text-sm flex items-center gap-1.5">
+                          <FolderOpen className="h-4 w-4 text-gold shrink-0" /> {fObj.name}
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setFolderStack((prev) => prev.slice(0, idx + 1))}
+                          className="hover:text-gold transition flex items-center gap-1 cursor-pointer"
+                        >
+                          <Folder className="h-3.5 w-3.5 text-gold" /> {fObj.name}
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
                 <span className="text-[11px] font-mono text-gold ml-1">
                   ({displayedMaterials.length} itens)
                 </span>
@@ -1241,6 +1306,15 @@ function AdminMateriaisPage() {
             </div>
 
             <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
+              <button
+                type="button"
+                onClick={() => openNewFolderModal(currentFolder.id)}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-gold/40 bg-card px-3 py-1.5 text-xs font-semibold text-gold hover:bg-gold/15 transition cursor-pointer"
+                title="Criar Subpasta dentro desta pasta"
+              >
+                <FolderPlus className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Nova Subpasta</span>
+              </button>
               <button
                 type="button"
                 onClick={() => openDriveImportModal(currentFolder.id)}
@@ -1304,22 +1378,96 @@ function AdminMateriaisPage() {
             )}
           </div>
         ) : currentFolder ? (
-          /* MODO DENTRO DA PASTA SELECIONADA */
-          <div>
-            {displayedMaterials.length === 0 ? (
+          /* MODO DENTRO DA PASTA SELECIONADA (SUBPASTAS + ARQUIVOS) */
+          <div className="space-y-6">
+            {/* Se houver subpastas dentro desta pasta, exibe as subpastas primeiro */}
+            {displayedSubfolders.length > 0 && (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between px-1">
+                  <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                    <Folder className="h-3.5 w-3.5 text-gold" />
+                    Subpastas ({displayedSubfolders.length})
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => openNewFolderModal(currentFolder.id)}
+                    className="text-xs text-gold hover:underline font-semibold flex items-center gap-1 cursor-pointer"
+                  >
+                    <Plus className="h-3 w-3" /> Nova Subpasta
+                  </button>
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {displayedSubfolders.map((folder) => {
+                    const colorCls = COLOR_MAP[folder.color || "gold"] || COLOR_MAP.gold;
+                    const folderItems = materialsList.filter((m) => m.folderId === folder.id);
+                    return (
+                      <div
+                        key={folder.id}
+                        onClick={() => navigateToFolder(folder.id)}
+                        className="group relative cursor-pointer rounded-2xl border border-border/70 bg-card/80 p-4 shadow-xs hover:border-gold/50 hover:shadow-gold transition-all duration-300 flex flex-col justify-between backdrop-blur-md"
+                      >
+                        <div>
+                          <div className="flex items-start justify-between gap-2">
+                            <div className={`grid h-10 w-10 place-items-center rounded-xl border ${colorCls} transition-transform duration-300 group-hover:scale-105 shadow-xs`}>
+                              <Folder className="h-5 w-5" />
+                            </div>
+                            <div className="flex items-center gap-1 opacity-70 group-hover:opacity-100 transition" onClick={(e) => e.stopPropagation()}>
+                              <button type="button" onClick={() => openEditFolderModal(folder)} className="p-1.5 text-muted-foreground hover:text-gold transition rounded-lg hover:bg-muted" title="Editar Subpasta">
+                                <Pencil className="h-3.5 w-3.5" />
+                              </button>
+                              <button type="button" onClick={() => handleDeleteFolder(folder.id, folder.name)} className="p-1.5 text-muted-foreground hover:text-red-400 transition rounded-lg hover:bg-red-500/10" title="Excluir Subpasta">
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                          <div className="mt-3">
+                            <h4 className="font-semibold text-sm text-foreground line-clamp-1 group-hover:text-gold transition">
+                              {folder.name}
+                            </h4>
+                            <p className="mt-0.5 text-xs text-muted-foreground line-clamp-1">
+                              {folder.description || "Subpasta de materiais oficiais."}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="mt-3 pt-2.5 border-t border-border/40 flex items-center justify-between text-xs text-muted-foreground">
+                          <span className="font-mono text-gold font-medium">
+                            {folderItems.length} arquivo(s)
+                          </span>
+                          <span className="text-gold flex items-center gap-1 text-[11px] font-semibold">
+                            Abrir <ChevronRight className="h-3 w-3" />
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Arquivos diretos desta pasta */}
+            {displayedMaterials.length === 0 && displayedSubfolders.length === 0 ? (
               <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed py-14 text-center bg-card/30">
                 <FolderOpen className="h-10 w-10 text-muted-foreground/30 mb-2" />
                 <p className="text-sm font-semibold text-foreground">Esta pasta está vazia</p>
                 <p className="text-xs text-muted-foreground mt-1">
-                  Adicione fotos, criativos ou PDFs diretamente para esta pasta temática.
+                  Adicione subpastas, fotos ou documentos do Drive diretamente para esta pasta temática.
                 </p>
-                <button
-                  type="button"
-                  onClick={() => openNewMaterialModal(currentFolder.id)}
-                  className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-gold-gradient px-4 py-2 text-xs font-semibold text-primary-foreground shadow-gold"
-                >
-                  <Plus className="h-3.5 w-3.5" /> Adicionar Primeiro Arquivo
-                </button>
+                <div className="flex items-center gap-2 mt-4 flex-wrap justify-center">
+                  <button
+                    type="button"
+                    onClick={() => openNewFolderModal(currentFolder.id)}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-gold/40 bg-card px-4 py-2 text-xs font-semibold text-gold hover:bg-gold/10"
+                  >
+                    <FolderPlus className="h-3.5 w-3.5" /> Criar Subpasta
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openDriveImportModal(currentFolder.id)}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-sky-500 hover:bg-sky-400 px-4 py-2 text-xs font-semibold text-white shadow-sm"
+                  >
+                    <FolderOpen className="h-3.5 w-3.5" /> Importar do Drive
+                  </button>
+                </div>
               </div>
             ) : viewMode === "grid" ? (
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 animate-in fade-in">
@@ -1332,14 +1480,14 @@ function AdminMateriaisPage() {
             )}
           </div>
         ) : (
-          /* MODO RAIZ: PASTAS EM CARDS TÁTEIS + ARQUIVOS AVULSOS */
+          /* MODO RAIZ: PASTAS PRINCIPAIS EM CARDS TÁTEIS + ARQUIVOS AVULSOS */
           <div className="space-y-8 animate-in fade-in">
-            {/* 1. SEÇÃO DE PASTAS TEMÁTICAS EM CARDS TÁTEIS */}
-            {foldersList.length > 0 && (
+            {/* 1. SEÇÃO DE PASTAS PRINCIPAIS */}
+            {rootFolders.length > 0 && (
               <div className="space-y-3">
                 <div className="flex items-center justify-between px-1">
                   <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                    Pastas Temáticas ({foldersList.length})
+                    Pastas Principais ({rootFolders.length})
                   </span>
                   <span className="text-[11px] text-muted-foreground">
                     Clique no card para abrir o diretório
@@ -1347,14 +1495,15 @@ function AdminMateriaisPage() {
                 </div>
 
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                  {foldersList.map((folder) => {
+                  {rootFolders.map((folder) => {
                     const colorCls = COLOR_MAP[folder.color || "gold"] || COLOR_MAP.gold;
                     const folderItems = materialsList.filter((m) => m.folderId === folder.id);
+                    const subfoldersCount = foldersList.filter((f) => f.parentId === folder.id).length;
 
                     return (
                       <div
                         key={folder.id}
-                        onClick={() => setCurrentFolderId(folder.id)}
+                        onClick={() => navigateToFolder(folder.id)}
                         className="group relative cursor-pointer rounded-2xl border border-border/70 bg-card/80 p-5 shadow-xs hover:border-gold/50 hover:shadow-gold transition-all duration-300 flex flex-col justify-between backdrop-blur-md"
                       >
                         <div>
@@ -1401,9 +1550,15 @@ function AdminMateriaisPage() {
 
                         {/* Rodapé com Contador e Botão de Abertura */}
                         <div className="mt-5 pt-3 border-t border-border/40 flex items-center justify-between">
-                          <span className="text-[11px] font-semibold text-muted-foreground">
-                            {folderItems.length} {folderItems.length === 1 ? "arquivo" : "arquivos"}
-                          </span>
+                          <div className="flex items-center gap-2 text-[11px] font-semibold text-muted-foreground">
+                            <span>{folderItems.length} {folderItems.length === 1 ? "arquivo" : "arquivos"}</span>
+                            {subfoldersCount > 0 && (
+                              <>
+                                <span>·</span>
+                                <span className="text-gold font-medium">{subfoldersCount} {subfoldersCount === 1 ? "subpasta" : "subpastas"}</span>
+                              </>
+                            )}
+                          </div>
                           <span className="inline-flex items-center gap-1 text-xs font-semibold text-gold group-hover:translate-x-1 transition-transform">
                             <span>Explorar</span>
                             <ChevronRight className="h-3.5 w-3.5" />
@@ -1481,6 +1636,28 @@ function AdminMateriaisPage() {
                   autoFocus
                 />
               </label>
+
+              <label className="block">
+                <span className="text-xs font-medium">Pasta Superior (Hierarquia)</span>
+                <select
+                  value={folderParentId || ""}
+                  onChange={(e) => setFolderParentId(e.target.value || null)}
+                  className="mt-1 h-10 w-full rounded-xl border bg-background px-3 text-xs outline-none focus:border-gold"
+                >
+                  <option value="">📁 Nenhuma (Pasta Principal / Raiz)</option>
+                  {foldersList
+                    .filter((f) => f.id !== editFolderId)
+                    .map((f) => (
+                      <option key={f.id} value={f.id}>
+                        {f.parentId ? "   └── 📂 " : "📁 "} {f.name}
+                      </option>
+                    ))}
+                </select>
+                <span className="text-[10px] text-muted-foreground mt-1 block">
+                  Escolha uma pasta pai caso queira organizar esta como subpasta.
+                </span>
+              </label>
+
               <label className="block">
                 <span className="text-xs font-medium">Descrição (opcional)</span>
                 <input
@@ -2377,13 +2554,22 @@ function AdminMateriaisPage() {
                   <option value="">📁 Raiz (Arquivos Gerais / Sem Pasta)</option>
                   {foldersList.map((f) => (
                     <option key={f.id} value={f.id}>
-                      📁 {f.name} {f.id === currentFolderId ? "(Pasta Atual)" : ""}
+                      {f.parentId ? "   └── 📂 " : "📁 "} {f.name} {f.id === currentFolderId ? "(Pasta Atual)" : ""}
                     </option>
                   ))}
                 </select>
-                <p className="text-[10px] text-muted-foreground">
-                  Os materiais entrarão organizados nesta pasta para os afiliados.
-                </p>
+                <div className="flex items-center justify-between pt-1">
+                  <p className="text-[10px] text-muted-foreground">
+                    Os materiais entrarão organizados nesta pasta/subpasta para os afiliados.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => openNewFolderModal(driveImportFolderId || currentFolderId || null)}
+                    className="text-[11px] text-sky-400 hover:text-sky-300 font-semibold flex items-center gap-1 cursor-pointer"
+                  >
+                    <Plus className="h-3 w-3" /> Nova Subpasta Aqui
+                  </button>
+                </div>
               </div>
 
               {/* Guia explicativo */}
@@ -2456,18 +2642,20 @@ function AdminMateriaisPage() {
                     {driveImportItems.map((item) => (
                       <div
                         key={item.id}
-                        className={`rounded-2xl border p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition ${
-                          item.isValid
-                            ? "border-sky-500/30 bg-sky-500/5 hover:border-sky-500/50"
-                            : "border-amber-500/30 bg-amber-500/5"
-                        }`}
+                        className="rounded-2xl border p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition border-sky-500/30 bg-sky-500/5 hover:border-sky-500/50"
                       >
                         <div className="flex items-center gap-3 min-w-0 flex-1">
                           <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-card border border-border/60">
-                            {item.kind === "ZIP" ? (
+                            {item.kind === "PASTA" ? (
+                              <Folder className="h-4 w-4 text-sky-400" />
+                            ) : item.kind === "ZIP" ? (
                               <Package className="h-4 w-4 text-amber-400" />
                             ) : item.kind === "DOCX" ? (
                               <FileText className="h-4 w-4 text-blue-400" />
+                            ) : item.kind === "XLSX" ? (
+                              <FileText className="h-4 w-4 text-emerald-400" />
+                            ) : item.kind === "SLIDES" ? (
+                              <Tv className="h-4 w-4 text-amber-400" />
                             ) : (
                               <FileUp className="h-4 w-4 text-rose-400" />
                             )}
@@ -2486,21 +2674,22 @@ function AdminMateriaisPage() {
                                 className="h-6 rounded-md border border-border/60 bg-background px-2 text-[10px] font-semibold text-foreground outline-none"
                               >
                                 <option value="PDF">PDF</option>
-                                <option value="ZIP">ZIP</option>
                                 <option value="DOCX">DOCX</option>
                                 <option value="XLSX">XLSX</option>
+                                <option value="SLIDES">SLIDES</option>
+                                <option value="PASTA">PASTA</option>
+                                <option value="ZIP">ZIP</option>
                                 <option value="VÍDEO">VÍDEO</option>
                                 <option value="IMAGEM">IMAGEM</option>
                                 <option value="LINK">LINK</option>
                               </select>
                               <span className="text-[10px] text-sky-400 font-mono">
-                                Google Drive
+                                {item.resourceType === "google_docs" && "Google Docs · DOCX"}
+                                {item.resourceType === "google_sheets" && "Google Sheets · XLSX"}
+                                {item.resourceType === "google_slides" && "Google Slides · Apresentação"}
+                                {item.resourceType === "drive_folder" && "Google Drive · Pasta Compartilhada"}
+                                {item.resourceType === "drive_file" && "Google Drive · Download Direto"}
                               </span>
-                              {!item.isValid && (
-                                <span className="text-[10px] text-amber-400">
-                                  {item.isFolder ? "Link de pasta (use arquivos)" : "ID inválido"}
-                                </span>
-                              )}
                             </div>
                           </div>
                         </div>

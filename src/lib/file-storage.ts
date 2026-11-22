@@ -1,18 +1,106 @@
 // Gerenciador nativo de arquivos brutos via IndexedDB e Supabase Storage para materiais da plataforma Vellessa
 import { supabase, isSupabaseConfigured } from "./supabase";
 import {
-  getDriveFileId,
-  isDriveFolderUrl,
   getDriveThumbnailUrl,
   getDriveDirectDownloadUrl,
 } from "./creative-storage";
 
-export {
-  getDriveFileId,
-  isDriveFolderUrl,
-  getDriveThumbnailUrl,
-  getDriveDirectDownloadUrl,
-};
+export { getDriveThumbnailUrl, getDriveDirectDownloadUrl };
+
+// ── HELPERS UNIVERSAIS DO GOOGLE DRIVE/DOCS/SHEETS ──────────────────────────
+
+/**
+ * Extrai o ID de um arquivo do Google Drive (file/d/ID, open?id=ID, uc?id=ID).
+ * Retorna null para links de pasta.
+ */
+export function getDriveFileId(url: string): string | null {
+  const t = url.trim();
+  if (/drive\.google\.com\/drive\/(?:u\/\d+\/)?folders\//.test(t)) return null;
+  const m = t.match(/drive\.google\.com\/(?:file\/d\/|open\?id=)([a-zA-Z0-9_-]{10,})/) ||
+    t.match(/[?&]id=([a-zA-Z0-9_-]{10,})/);
+  if (m) return m[1];
+  const uc = t.match(/drive\.google\.com\/uc.*[?&]id=([a-zA-Z0-9_-]{10,})/);
+  return uc ? uc[1] : null;
+}
+
+/** Extrai o ID de um documento Google Docs (docs.google.com/document/d/ID). */
+export function getGoogleDocsId(url: string): string | null {
+  const m = url.trim().match(/docs\.google\.com\/document\/d\/([a-zA-Z0-9_-]{10,})/);
+  return m ? m[1] : null;
+}
+
+/** Extrai o ID de uma planilha Google Sheets (docs.google.com/spreadsheets/d/ID). */
+export function getGoogleSheetsId(url: string): string | null {
+  const m = url.trim().match(/docs\.google\.com\/spreadsheets\/d\/([a-zA-Z0-9_-]{10,})/);
+  return m ? m[1] : null;
+}
+
+/** Extrai o ID de uma apresentação Google Slides (docs.google.com/presentation/d/ID). */
+export function getGoogleSlidesId(url: string): string | null {
+  const m = url.trim().match(/docs\.google\.com\/presentation\/d\/([a-zA-Z0-9_-]{10,})/);
+  return m ? m[1] : null;
+}
+
+/** Extrai o ID de pasta do Google Drive (drive/folders/ID). */
+export function getDriveFolderId(url: string): string | null {
+  const m = url.trim().match(/drive\.google\.com\/drive\/(?:u\/\d+\/)?folders\/([a-zA-Z0-9_-]{10,})/);
+  return m ? m[1] : null;
+}
+
+/** Verifica se é um link de pasta do Google Drive. */
+export function isDriveFolderUrl(url: string): boolean {
+  return /drive\.google\.com\/drive\/(?:u\/\d+\/)?folders\//.test(url.trim());
+}
+
+/** Verifica se é um link do Google Docs. */
+export function isGoogleDocsUrl(url: string): boolean {
+  return /docs\.google\.com\/document\/d\//.test(url.trim());
+}
+
+/** Verifica se é um link do Google Sheets. */
+export function isGoogleSheetsUrl(url: string): boolean {
+  return /docs\.google\.com\/spreadsheets\/d\//.test(url.trim());
+}
+
+/** Verifica se é um link do Google Slides. */
+export function isGoogleSlidesUrl(url: string): boolean {
+  return /docs\.google\.com\/presentation\/d\//.test(url.trim());
+}
+
+/** Verifica se é qualquer URL suportada do ecossistema Google. */
+export function isGoogleUrl(url: string): boolean {
+  return (
+    url.includes("drive.google.com") ||
+    url.includes("docs.google.com")
+  );
+}
+
+/** Gera URL de download direto do Google Drive (PDF, ZIP, Imagens etc.). */
+export function buildDriveDownloadUrl(fileId: string): string {
+  return `https://drive.google.com/uc?export=download&id=${fileId}`;
+}
+
+/** Gera URL de exportação de Google Docs como Word (.docx). */
+export function buildDocsExportUrl(docId: string): string {
+  return `https://docs.google.com/document/d/${docId}/export?format=docx`;
+}
+
+/** Gera URL de exportação de Google Sheets como Excel (.xlsx). */
+export function buildSheetsExportUrl(sheetId: string): string {
+  return `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=xlsx`;
+}
+
+/** Gera URL de exportação de Google Slides como PDF. */
+export function buildSlidesExportUrl(slideId: string): string {
+  return `https://docs.google.com/presentation/d/${slideId}/export?format=pdf`;
+}
+
+/** Gera URL de acesso direto a uma pasta do Google Drive. */
+export function buildDriveFolderUrl(folderId: string): string {
+  return `https://drive.google.com/drive/folders/${folderId}`;
+}
+
+// ── INTERFACE DO ITEM DE IMPORTAÇÃO ─────────────────────────────────────────
 
 export interface DriveMaterialImportItem {
   id: string;
@@ -21,27 +109,48 @@ export interface DriveMaterialImportItem {
   directDownloadUrl: string;
   thumbnailUrl: string;
   title: string;
-  kind: string; // "PDF" | "ZIP" | "DOCX" | "XLSX" | "VÍDEO" | "IMAGEM" | "OUTRO"
+  /** "PDF" | "DOCX" | "XLSX" | "SLIDES" | "ZIP" | "VÍDEO" | "IMAGEM" | "PASTA" | "LINK" */
+  kind: string;
   isValid: boolean;
   isFolder: boolean;
+  /** Tipo de recurso para roteamento de ação pelo afiliado */
+  resourceType: "drive_file" | "drive_folder" | "google_docs" | "google_sheets" | "google_slides";
 }
+
+// ── INFERIDOR DE FORMATO ─────────────────────────────────────────────────────
 
 export function inferMaterialKind(url: string, title = ""): string {
   const lc = (url + " " + title).toLowerCase();
+  // Google Docs => DOCX
+  if (isGoogleDocsUrl(url)) return "DOCX";
+  // Google Sheets => XLSX
+  if (isGoogleSheetsUrl(url)) return "XLSX";
+  // Google Slides => SLIDES
+  if (isGoogleSlidesUrl(url)) return "SLIDES";
+  // Pasta do Drive => PASTA
+  if (isDriveFolderUrl(url)) return "PASTA";
+  // Arquivos comuns pelo padrão de extensão / palavras-chave
   if (/\.pdf($|\?)/.test(lc) || /pdf|manual|apostila|documento|guia|anvisa|laudo/.test(lc)) return "PDF";
-  if (/\.(zip|rar|7z|tar|gz)($|\?)/.test(lc) || /zip|rar|pacote|pack|arquivo/.test(lc)) return "ZIP";
-  if (/\.(docx?|odt|txt|rtf)($|\?)/.test(lc) || /doc|docx|texto|copy|roteiro|script/.test(lc)) return "DOCX";
-  if (/\.(xlsx?|csv|ods)($|\?)/.test(lc) || /planilha|sheet|excel|tabela|dados/.test(lc)) return "XLSX";
+  if (/\.(zip|rar|7z|tar|gz)($|\?)/.test(lc) || /zip|rar|pacote|pack/.test(lc)) return "ZIP";
+  if (/\.(docx?|odt|rtf)($|\?)/.test(lc) || /docx|texto|copy|roteiro|script/.test(lc)) return "DOCX";
+  if (/\.(xlsx?|csv|ods)($|\?)/.test(lc) || /planilha|sheet|excel|tabela/.test(lc)) return "XLSX";
   if (/\.(mp4|mov|webm|avi|mkv)($|\?)/.test(lc) || /video|vídeo|reels|aula/.test(lc)) return "VÍDEO";
-  if (/\.(png|jpe?g|webp|gif|svg)($|\?)/.test(lc) || /imagem|foto|banner|mockup|png|jpg/.test(lc)) return "IMAGEM";
+  if (/\.(png|jpe?g|webp|gif|svg)($|\?)/.test(lc) || /imagem|foto|banner|mockup/.test(lc)) return "IMAGEM";
   return "PDF";
 }
 
+// ── PARSER UNIVERSAL DE LINKS DO GOOGLE ─────────────────────────────────────
+
+/**
+ * Analisa um bloco de texto com múltiplos links do ecossistema Google
+ * (Drive, Docs, Sheets, Slides) e retorna uma lista de itens prontos
+ * para publicação, todos com isValid = true.
+ */
 export function parseDriveMaterialLinks(raw: string): DriveMaterialImportItem[] {
   const rawLinks = raw
     .split(/[\n,;]+/)
     .map((l) => l.trim())
-    .filter((l) => l.length > 10 && l.includes("drive.google.com"));
+    .filter((l) => l.length > 10 && isGoogleUrl(l));
 
   const seen = new Set<string>();
   const items: DriveMaterialImportItem[] = [];
@@ -50,24 +159,97 @@ export function parseDriveMaterialLinks(raw: string): DriveMaterialImportItem[] 
     if (seen.has(url)) return;
     seen.add(url);
 
-    const isFolder = isDriveFolderUrl(url);
-    const fileId = isFolder ? null : getDriveFileId(url);
-    const isValid = !isFolder && fileId !== null;
+    const uid = `drive-mat-import-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 6)}`;
 
-    const id = `drive-mat-import-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 6)}`;
-    const kind = inferMaterialKind(url, "");
+    // ── Google Docs ──────────────────────────────────────────────────────────
+    if (isGoogleDocsUrl(url)) {
+      const docId = getGoogleDocsId(url)!;
+      items.push({
+        id: uid,
+        originalUrl: url,
+        driveFileId: docId,
+        directDownloadUrl: buildDocsExportUrl(docId),
+        thumbnailUrl: "",
+        title: `Documento ${items.length + 1}`,
+        kind: "DOCX",
+        isValid: true,
+        isFolder: false,
+        resourceType: "google_docs",
+      });
+      return;
+    }
 
-    items.push({
-      id,
-      originalUrl: url,
-      driveFileId: fileId || "",
-      directDownloadUrl: fileId ? getDriveDirectDownloadUrl(fileId) : url,
-      thumbnailUrl: fileId ? getDriveThumbnailUrl(fileId, 400) : "",
-      title: isFolder ? `Pasta do Drive ${items.length + 1}` : `Material ${items.length + 1}`,
-      kind,
-      isValid,
-      isFolder,
-    });
+    // ── Google Sheets ────────────────────────────────────────────────────────
+    if (isGoogleSheetsUrl(url)) {
+      const sheetId = getGoogleSheetsId(url)!;
+      items.push({
+        id: uid,
+        originalUrl: url,
+        driveFileId: sheetId,
+        directDownloadUrl: buildSheetsExportUrl(sheetId),
+        thumbnailUrl: "",
+        title: `Planilha ${items.length + 1}`,
+        kind: "XLSX",
+        isValid: true,
+        isFolder: false,
+        resourceType: "google_sheets",
+      });
+      return;
+    }
+
+    // ── Google Slides ────────────────────────────────────────────────────────
+    if (isGoogleSlidesUrl(url)) {
+      const slideId = getGoogleSlidesId(url)!;
+      items.push({
+        id: uid,
+        originalUrl: url,
+        driveFileId: slideId,
+        directDownloadUrl: buildSlidesExportUrl(slideId),
+        thumbnailUrl: "",
+        title: `Apresentação ${items.length + 1}`,
+        kind: "SLIDES",
+        isValid: true,
+        isFolder: false,
+        resourceType: "google_slides",
+      });
+      return;
+    }
+
+    // ── Pasta do Google Drive ────────────────────────────────────────────────
+    if (isDriveFolderUrl(url)) {
+      const folderId = getDriveFolderId(url) || "";
+      items.push({
+        id: uid,
+        originalUrl: url,
+        driveFileId: folderId,
+        directDownloadUrl: url, // Link da pasta diretamente
+        thumbnailUrl: "",
+        title: `Pasta do Drive ${items.length + 1}`,
+        kind: "PASTA",
+        isValid: true,   // ✅ PASTA AGORA É VÁLIDA
+        isFolder: true,
+        resourceType: "drive_folder",
+      });
+      return;
+    }
+
+    // ── Arquivo comum do Google Drive ────────────────────────────────────────
+    const fileId = getDriveFileId(url);
+    if (fileId) {
+      const kind = inferMaterialKind(url, "");
+      items.push({
+        id: uid,
+        originalUrl: url,
+        driveFileId: fileId,
+        directDownloadUrl: buildDriveDownloadUrl(fileId),
+        thumbnailUrl: getDriveThumbnailUrl(fileId, 400),
+        title: `Material ${items.length + 1}`,
+        kind,
+        isValid: true,
+        isFolder: false,
+        resourceType: "drive_file",
+      });
+    }
   });
 
   return items;

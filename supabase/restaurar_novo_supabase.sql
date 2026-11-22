@@ -97,6 +97,7 @@ CREATE TABLE IF NOT EXISTS public.material_folders (
   description TEXT,
   color TEXT DEFAULT 'gold',
   drive_url TEXT,
+  parent_id TEXT REFERENCES public.material_folders(id) ON DELETE CASCADE,
   order_index INT DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );

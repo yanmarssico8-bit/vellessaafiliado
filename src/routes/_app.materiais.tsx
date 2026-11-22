@@ -173,7 +173,30 @@ function Materiais() {
     useAffiliateStore();
 
   // ── ESTADO DE NAVEGAÇÃO ESPACIAL (FINDER / GOOGLE DRIVE) ────────────────────
-  const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
+  const [folderStack, setFolderStack] = useState<string[]>([]);
+  const currentFolderId = folderStack.length > 0 ? folderStack[folderStack.length - 1] : null;
+
+  const navigateToFolder = (folderId: string) => {
+    setFolderStack((prev) => [...prev, folderId]);
+    setSearchQuery("");
+  };
+
+  const navigateBack = () => {
+    setFolderStack((prev) => prev.slice(0, -1));
+    setSearchQuery("");
+  };
+
+  const navigateToRoot = () => {
+    setFolderStack([]);
+    setSearchQuery("");
+  };
+
+  // Compatibilidade retroativa
+  const setCurrentFolderId = (id: string | null) => {
+    if (!id) navigateToRoot();
+    else setFolderStack([id]);
+  };
+
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
 
@@ -295,6 +318,14 @@ function Materiais() {
 
   // ── FILTROS E CONTEXTO DE DIRETÓRIO ATUAL ──────────────────────────────────
   const currentFolder = foldersList.find((f) => f.id === currentFolderId);
+
+  // Subpastas visíveis no diretório atual
+  const displayedSubfolders = foldersList.filter((f) =>
+    currentFolderId ? f.parentId === currentFolderId : !f.parentId
+  );
+
+  // Pastas raiz (sem parentId) para exibir na raiz
+  const rootFolders = foldersList.filter((f) => !f.parentId);
 
   // Arquivos exibidos de acordo com a pasta selecionada ou busca ativa
   const displayedMaterials = materialsList.filter((m) => {
@@ -427,10 +458,29 @@ function Materiais() {
           <button
             type="button"
             onClick={() => handleDownloadAllFiles(m)}
-            className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-gold-gradient py-2 px-3 text-xs font-semibold text-primary-foreground shadow-gold hover:brightness-105 transition"
+            className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-gold-gradient py-2 px-3 text-xs font-semibold text-primary-foreground shadow-gold hover:brightness-105 transition cursor-pointer"
           >
-            <Download className="h-3.5 w-3.5" />
-            <span>{isMultiFile ? `Baixar Todos (${m.files!.length})` : "Baixar Arquivo"}</span>
+            {m.kind === "PASTA" || (m.file_url && m.file_url.includes("drive/folders")) ? (
+              <>
+                <ExternalLink className="h-3.5 w-3.5" />
+                <span>Acessar Pasta no Drive</span>
+              </>
+            ) : m.kind === "DOCX" ? (
+              <>
+                <FileText className="h-3.5 w-3.5" />
+                <span>Baixar DOCX</span>
+              </>
+            ) : m.kind === "XLSX" ? (
+              <>
+                <FileText className="h-3.5 w-3.5" />
+                <span>Baixar Planilha</span>
+              </>
+            ) : (
+              <>
+                <Download className="h-3.5 w-3.5" />
+                <span>{isMultiFile ? `Baixar Todos (${m.files!.length})` : "Baixar Arquivo"}</span>
+              </>
+            )}
           </button>
         </div>
       </div>
@@ -492,12 +542,26 @@ function Materiais() {
           <button
             type="button"
             onClick={() => handleDownloadAllFiles(m)}
-            className="inline-flex items-center gap-1.5 rounded-xl bg-gold-gradient py-2 px-3.5 text-xs font-semibold text-primary-foreground shadow-gold hover:brightness-105 transition"
+            className="inline-flex items-center gap-1.5 rounded-xl bg-gold-gradient py-2 px-3.5 text-xs font-semibold text-primary-foreground shadow-gold hover:brightness-105 transition cursor-pointer"
           >
-            <Download className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">
-              {isMultiFile ? `Baixar Todos (${m.files!.length})` : "Baixar Arquivo"}
-            </span>
+            {m.kind === "PASTA" || (m.file_url && m.file_url.includes("drive/folders")) ? (
+              <>
+                <ExternalLink className="h-3.5 w-3.5" />
+                <span>Acessar Pasta</span>
+              </>
+            ) : m.kind === "DOCX" ? (
+              <>
+                <FileText className="h-3.5 w-3.5" />
+                <span>Baixar DOCX</span>
+              </>
+            ) : (
+              <>
+                <Download className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">
+                  {isMultiFile ? `Baixar Todos (${m.files!.length})` : "Baixar Arquivo"}
+                </span>
+              </>
+            )}
           </button>
         </div>
       </div>
@@ -745,18 +809,44 @@ function Materiais() {
             <div className="flex flex-wrap items-center gap-2 sm:gap-3 min-w-0 flex-1">
               <button
                 type="button"
-                onClick={() => setCurrentFolderId(null)}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-card border border-gold/30 px-3 py-1.5 text-xs font-semibold text-gold hover:bg-gold/15 transition shadow-xs shrink-0"
+                onClick={folderStack.length > 1 ? navigateBack : navigateToRoot}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-card border border-gold/30 px-3 py-1.5 text-xs font-semibold text-gold hover:bg-gold/15 transition shadow-xs shrink-0 cursor-pointer"
               >
                 <ArrowLeft className="h-3.5 w-3.5" />
-                <span>Voltar</span>
+                <span>{folderStack.length > 1 ? "Voltar Nível" : "Voltar à Raiz"}</span>
               </button>
-              <div className="flex items-center gap-1.5 text-xs text-muted-foreground min-w-0">
-                <ChevronRight className="h-3.5 w-3.5 text-gold shrink-0" />
-                <span className="font-semibold text-foreground text-xs sm:text-sm flex items-center gap-1.5 truncate">
-                  <FolderOpen className="h-4 w-4 text-gold shrink-0" /> {currentFolder.name}
-                </span>
-                <span className="text-[11px] font-mono text-gold shrink-0">
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground min-w-0 flex-wrap">
+                <button
+                  type="button"
+                  onClick={navigateToRoot}
+                  className="hover:text-gold transition cursor-pointer"
+                >
+                  Materiais
+                </button>
+                {folderStack.map((fid, idx) => {
+                  const fObj = foldersList.find((f) => f.id === fid);
+                  if (!fObj) return null;
+                  const isLast = idx === folderStack.length - 1;
+                  return (
+                    <div key={fid} className="flex items-center gap-1.5">
+                      <ChevronRight className="h-3.5 w-3.5 text-gold shrink-0" />
+                      {isLast ? (
+                        <span className="font-semibold text-foreground text-xs sm:text-sm flex items-center gap-1.5 truncate">
+                          <FolderOpen className="h-4 w-4 text-gold shrink-0" /> {fObj.name}
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setFolderStack((prev) => prev.slice(0, idx + 1))}
+                          className="hover:text-gold transition flex items-center gap-1 cursor-pointer"
+                        >
+                          <Folder className="h-3.5 w-3.5 text-gold" /> {fObj.name}
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+                <span className="text-[11px] font-mono text-gold shrink-0 ml-1">
                   ({displayedMaterials.length})
                 </span>
               </div>
@@ -810,9 +900,71 @@ function Materiais() {
             )}
           </div>
         ) : currentFolder ? (
-          /* MODO DENTRO DA PASTA */
-          <div>
-            {displayedMaterials.length === 0 ? (
+          /* MODO DENTRO DA PASTA (SUBPASTAS + ARQUIVOS) */
+          <div className="space-y-6">
+            {/* Se houver subpastas dentro desta pasta, exibe as subpastas primeiro */}
+            {displayedSubfolders.length > 0 && (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between px-1">
+                  <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                    <Folder className="h-3.5 w-3.5 text-gold" />
+                    Subpastas ({displayedSubfolders.length})
+                  </span>
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {displayedSubfolders.map((folder) => {
+                    const colorCls = COLOR_MAP[folder.color || "gold"] || COLOR_MAP.gold;
+                    const folderItems = materialsList.filter((m) => m.folderId === folder.id);
+
+                    return (
+                      <div
+                        key={folder.id}
+                        onClick={() => navigateToFolder(folder.id)}
+                        className="group relative cursor-pointer rounded-2xl border border-gold/30 bg-card/80 p-5 shadow-xs hover:border-gold hover:shadow-gold transition-all duration-300 flex flex-col justify-between backdrop-blur-md"
+                      >
+                        <div>
+                          <div className="flex items-start justify-between gap-2">
+                            <div
+                              className={`grid h-12 w-12 place-items-center rounded-2xl border ${colorCls} transition-transform duration-300 group-hover:scale-105 shadow-xs`}
+                            >
+                              <Folder className="h-6 w-6" />
+                            </div>
+                            <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                              {folder.driveUrl && (
+                                <span className="rounded-full bg-sky-500/10 border border-sky-500/25 px-2 py-0.5 text-[10px] font-semibold text-sky-400 flex items-center gap-1">
+                                  <ExternalLink className="h-2.5 w-2.5" /> Drive
+                                </span>
+                              )}
+                              <span className="rounded-full bg-gold/10 border border-gold/25 px-2.5 py-0.5 text-[11px] font-bold text-gold">
+                                {folderItems.length} {folderItems.length === 1 ? "item" : "itens"}
+                              </span>
+                            </div>
+                          </div>
+                          <h4 className="mt-3.5 font-bold text-base text-foreground group-hover:text-gold transition line-clamp-1">
+                            {folder.name}
+                          </h4>
+                          <p className="mt-1 text-xs text-muted-foreground line-clamp-2 leading-relaxed">
+                            {folder.description || "Subpasta de materiais oficiais."}
+                          </p>
+                        </div>
+                        <div className="mt-5 pt-3 border-t border-border/40 flex items-center justify-between">
+                          <span className="text-[11px] font-semibold text-muted-foreground">
+                            {folderItems.length} arquivos
+                          </span>
+                          <span className="inline-flex items-center gap-1 text-xs font-semibold text-gold group-hover:translate-x-1 transition-transform">
+                            <span>Explorar</span>
+                            <ChevronRight className="h-3.5 w-3.5" />
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Arquivos diretos desta pasta */}
+            {displayedMaterials.length === 0 && displayedSubfolders.length === 0 ? (
               <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed py-14 text-center bg-card/30">
                 <FolderOpen className="h-10 w-10 text-muted-foreground/30 mb-2" />
                 <p className="text-sm font-semibold text-foreground">Esta pasta está vazia no momento</p>
@@ -833,12 +985,12 @@ function Materiais() {
         ) : (
           /* MODO RAIZ: PASTAS EM CARDS TÁTEIS + ARQUIVOS GERAIS */
           <div className="space-y-8 animate-in fade-in">
-            {/* 1. SEÇÃO DE PASTAS TEMÁTICAS EM CARDS TÁTEIS */}
-            {foldersList.length > 0 && (
+            {/* 1. SEÇÃO DE PASTAS PRINCIPAIS */}
+            {rootFolders.length > 0 && (
               <div className="space-y-3">
                 <div className="flex items-center justify-between px-1">
                   <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                    Pastas Temáticas ({foldersList.length})
+                    Pastas Principais ({rootFolders.length})
                   </span>
                   <span className="text-[11px] text-muted-foreground">
                     Clique na pasta para explorar o conteúdo
@@ -846,14 +998,15 @@ function Materiais() {
                 </div>
 
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                  {foldersList.map((folder) => {
+                  {rootFolders.map((folder) => {
                     const colorCls = COLOR_MAP[folder.color || "gold"] || COLOR_MAP.gold;
                     const folderItems = materialsList.filter((m) => m.folderId === folder.id);
+                    const subCount = foldersList.filter((f) => f.parentId === folder.id).length;
 
                     return (
                       <div
                         key={folder.id}
-                        onClick={() => setCurrentFolderId(folder.id)}
+                        onClick={() => navigateToFolder(folder.id)}
                         className="group relative cursor-pointer rounded-2xl border border-gold/30 bg-card/80 p-5 shadow-xs hover:border-gold hover:shadow-gold transition-all duration-300 flex flex-col justify-between backdrop-blur-md"
                       >
                         <div>
@@ -881,15 +1034,21 @@ function Materiais() {
                             {folder.name}
                           </h4>
                           <p className="mt-1 text-xs text-muted-foreground line-clamp-2 leading-relaxed">
-                            {folder.description || "Pasta com ativos e arquivos oficiais para suas campanhas."}
+                            {folder.description || "Pasta temática de arquivos e manuais oficiais."}
                           </p>
                         </div>
 
                         {/* Rodapé com Ação Clara */}
                         <div className="mt-5 pt-3 border-t border-border/40 flex items-center justify-between">
-                          <span className="text-[11px] font-medium text-muted-foreground">
-                            Acessar pasta
-                          </span>
+                          <div className="flex items-center gap-1.5 text-[11px] font-semibold text-muted-foreground">
+                            <span>{folderItems.length} arquivos</span>
+                            {subCount > 0 && (
+                              <>
+                                <span>·</span>
+                                <span className="text-gold font-medium">{subCount} subpastas</span>
+                              </>
+                            )}
+                          </div>
                           <span className="inline-flex items-center gap-1 text-xs font-semibold text-gold group-hover:translate-x-1 transition-transform">
                             <span>Explorar</span>
                             <ChevronRight className="h-3.5 w-3.5" />
