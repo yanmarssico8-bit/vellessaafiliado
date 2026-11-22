@@ -1,5 +1,77 @@
 // Gerenciador nativo de arquivos brutos via IndexedDB e Supabase Storage para materiais da plataforma Vellessa
 import { supabase, isSupabaseConfigured } from "./supabase";
+import {
+  getDriveFileId,
+  isDriveFolderUrl,
+  getDriveThumbnailUrl,
+  getDriveDirectDownloadUrl,
+} from "./creative-storage";
+
+export {
+  getDriveFileId,
+  isDriveFolderUrl,
+  getDriveThumbnailUrl,
+  getDriveDirectDownloadUrl,
+};
+
+export interface DriveMaterialImportItem {
+  id: string;
+  originalUrl: string;
+  driveFileId: string;
+  directDownloadUrl: string;
+  thumbnailUrl: string;
+  title: string;
+  kind: string; // "PDF" | "ZIP" | "DOCX" | "XLSX" | "VÍDEO" | "IMAGEM" | "OUTRO"
+  isValid: boolean;
+  isFolder: boolean;
+}
+
+export function inferMaterialKind(url: string, title = ""): string {
+  const lc = (url + " " + title).toLowerCase();
+  if (/\.pdf($|\?)/.test(lc) || /pdf|manual|apostila|documento|guia|anvisa|laudo/.test(lc)) return "PDF";
+  if (/\.(zip|rar|7z|tar|gz)($|\?)/.test(lc) || /zip|rar|pacote|pack|arquivo/.test(lc)) return "ZIP";
+  if (/\.(docx?|odt|txt|rtf)($|\?)/.test(lc) || /doc|docx|texto|copy|roteiro|script/.test(lc)) return "DOCX";
+  if (/\.(xlsx?|csv|ods)($|\?)/.test(lc) || /planilha|sheet|excel|tabela|dados/.test(lc)) return "XLSX";
+  if (/\.(mp4|mov|webm|avi|mkv)($|\?)/.test(lc) || /video|vídeo|reels|aula/.test(lc)) return "VÍDEO";
+  if (/\.(png|jpe?g|webp|gif|svg)($|\?)/.test(lc) || /imagem|foto|banner|mockup|png|jpg/.test(lc)) return "IMAGEM";
+  return "PDF";
+}
+
+export function parseDriveMaterialLinks(raw: string): DriveMaterialImportItem[] {
+  const rawLinks = raw
+    .split(/[\n,;]+/)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 10 && l.includes("drive.google.com"));
+
+  const seen = new Set<string>();
+  const items: DriveMaterialImportItem[] = [];
+
+  rawLinks.forEach((url, idx) => {
+    if (seen.has(url)) return;
+    seen.add(url);
+
+    const isFolder = isDriveFolderUrl(url);
+    const fileId = isFolder ? null : getDriveFileId(url);
+    const isValid = !isFolder && fileId !== null;
+
+    const id = `drive-mat-import-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 6)}`;
+    const kind = inferMaterialKind(url, "");
+
+    items.push({
+      id,
+      originalUrl: url,
+      driveFileId: fileId || "",
+      directDownloadUrl: fileId ? getDriveDirectDownloadUrl(fileId) : url,
+      thumbnailUrl: fileId ? getDriveThumbnailUrl(fileId, 400) : "",
+      title: isFolder ? `Pasta do Drive ${items.length + 1}` : `Material ${items.length + 1}`,
+      kind,
+      isValid,
+      isFolder,
+    });
+  });
+
+  return items;
+}
 
 const DB_NAME = "vellessa_materials_db";
 const STORE_NAME = "materials_files";

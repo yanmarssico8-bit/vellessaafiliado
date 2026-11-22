@@ -762,16 +762,29 @@ function Materiais() {
               </div>
             </div>
 
-            {displayedMaterials.length > 0 && (
-              <button
-                type="button"
-                onClick={() => handleDownloadEntireFolder(displayedMaterials)}
-                className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-gold-gradient px-3.5 py-1.5 text-xs font-semibold text-primary-foreground shadow-gold hover:brightness-105 transition w-full sm:w-auto shrink-0"
-              >
-                <Download className="h-3.5 w-3.5" />
-                <span>Baixar Pasta Completa</span>
-              </button>
-            )}
+            <div className="flex items-center gap-2 w-full sm:w-auto shrink-0 flex-wrap">
+              {currentFolder.driveUrl && (
+                <a
+                  href={currentFolder.driveUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-sky-500/40 bg-sky-500/10 px-3.5 py-1.5 text-xs font-semibold text-sky-400 hover:bg-sky-500/20 transition w-full sm:w-auto shrink-0"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  <span>Abrir no Google Drive</span>
+                </a>
+              )}
+              {displayedMaterials.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => handleDownloadEntireFolder(displayedMaterials)}
+                  className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-gold-gradient px-3.5 py-1.5 text-xs font-semibold text-primary-foreground shadow-gold hover:brightness-105 transition w-full sm:w-auto shrink-0 cursor-pointer"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  <span>Baixar Pasta Completa</span>
+                </button>
+              )}
+            </div>
           </div>
         )}
 
@@ -851,9 +864,16 @@ function Materiais() {
                             >
                               <Folder className="h-6 w-6" />
                             </div>
-                            <span className="rounded-full bg-gold/10 border border-gold/25 px-2.5 py-0.5 text-[11px] font-bold text-gold">
-                              {folderItems.length} {folderItems.length === 1 ? "item" : "itens"}
-                            </span>
+                            <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                              {folder.driveUrl && (
+                                <span className="rounded-full bg-sky-500/10 border border-sky-500/25 px-2 py-0.5 text-[10px] font-semibold text-sky-400 flex items-center gap-1">
+                                  <ExternalLink className="h-2.5 w-2.5" /> Drive
+                                </span>
+                              )}
+                              <span className="rounded-full bg-gold/10 border border-gold/25 px-2.5 py-0.5 text-[11px] font-bold text-gold">
+                                {folderItems.length} {folderItems.length === 1 ? "item" : "itens"}
+                              </span>
+                            </div>
                           </div>
 
                           {/* Nome e Descrição */}

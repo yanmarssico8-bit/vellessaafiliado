@@ -30,6 +30,8 @@ import {
   UploadCloud,
   X,
   ZoomIn,
+  Info,
+  Check,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -45,6 +47,10 @@ import {
   getRawFile,
   generateImageThumbnail,
   generateVideoThumbnail,
+  parseDriveMaterialLinks,
+  type DriveMaterialImportItem,
+  isDriveFolderUrl,
+  inferMaterialKind,
 } from "@/lib/file-storage";
 
 export const Route = createFileRoute("/_admin/admin/materiais")({
@@ -187,6 +193,7 @@ function AdminMateriaisPage() {
     updateAffiliateLink,
     deleteAffiliateLink,
     createMaterial,
+    createMaterialsBatch,
     updateMaterial,
     deleteMaterial,
     createFolder,
@@ -237,6 +244,7 @@ function AdminMateriaisPage() {
   const [folderName, setFolderName] = useState("");
   const [folderDescription, setFolderDescription] = useState("");
   const [folderColor, setFolderColor] = useState("gold");
+  const [folderDriveUrl, setFolderDriveUrl] = useState("");
 
   const FOLDER_COLORS = [
     { label: "Ouro", value: "gold" },
@@ -270,6 +278,7 @@ function AdminMateriaisPage() {
     setFolderName("");
     setFolderDescription("");
     setFolderColor("gold");
+    setFolderDriveUrl("");
     setShowFolderModal(true);
   };
 
@@ -278,6 +287,7 @@ function AdminMateriaisPage() {
     setFolderName(f.name);
     setFolderDescription(f.description || "");
     setFolderColor(f.color || "gold");
+    setFolderDriveUrl(f.driveUrl || "");
     setShowFolderModal(true);
   };
 
@@ -289,15 +299,90 @@ function AdminMateriaisPage() {
         name: folderName,
         description: folderDescription,
         color: folderColor,
+        driveUrl: folderDriveUrl.trim() || undefined,
       });
     } else {
       await createFolder({
         name: folderName,
         description: folderDescription,
         color: folderColor,
+        driveUrl: folderDriveUrl.trim() || undefined,
       });
     }
     setShowFolderModal(false);
+  };
+
+  // ── IMPORTAÇÃO GOOGLE DRIVE EM LOTE ─────────────────────────────────────────
+  const [showDriveImportModal, setShowDriveImportModal] = useState(false);
+  const [driveLinksInput, setDriveLinksInput] = useState("");
+  const [driveImportItems, setDriveImportItems] = useState<DriveMaterialImportItem[]>([]);
+  const [isDriveProcessing, setIsDriveProcessing] = useState(false);
+  const [isDrivePublishing, setIsDrivePublishing] = useState(false);
+  const [driveImportFolderId, setDriveImportFolderId] = useState("");
+
+  const openDriveImportModal = (targetFolderId?: string) => {
+    setDriveLinksInput("");
+    setDriveImportItems([]);
+    const resolved = targetFolderId || currentFolderId || (foldersList.length > 0 ? foldersList[0].id : "");
+    setDriveImportFolderId(resolved);
+    setShowDriveImportModal(true);
+  };
+
+  const handleDriveProcessLinks = () => {
+    if (!driveLinksInput.trim()) return;
+    setIsDriveProcessing(true);
+    try {
+      const items = parseDriveMaterialLinks(driveLinksInput);
+      if (items.length === 0) {
+        toast.error("Nenhum link válido do Google Drive encontrado. Verifique os links colados.");
+        setIsDriveProcessing(false);
+        return;
+      }
+      setDriveImportItems(items);
+      const valids = items.filter((i) => i.isValid).length;
+      toast.success(`${valids} arquivo(s) válido(s) do Google Drive detectado(s)!`);
+    } catch {
+      toast.error("Erro ao processar links do Drive.");
+    } finally {
+      setIsDriveProcessing(false);
+    }
+  };
+
+  const updateDriveImportItem = (id: string, patch: Partial<DriveMaterialImportItem>) => {
+    setDriveImportItems((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, ...patch } : item))
+    );
+  };
+
+  const removeDriveImportItem = (id: string) => {
+    setDriveImportItems((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  const handleDrivePublishAll = async () => {
+    const validItems = driveImportItems.filter((i) => i.isValid);
+    if (validItems.length === 0) {
+      toast.error("Nenhum arquivo válido para publicar.");
+      return;
+    }
+    setIsDrivePublishing(true);
+    try {
+      const batch = validItems.map((item) => ({
+        title: item.title,
+        kind: item.kind,
+        size: "Google Drive",
+        file_url: item.directDownloadUrl,
+        folderId: driveImportFolderId || undefined,
+        rawFileName: item.title,
+      }));
+      await createMaterialsBatch(batch);
+      setShowDriveImportModal(false);
+      setDriveImportItems([]);
+      setDriveLinksInput("");
+    } catch {
+      toast.error("Erro ao publicar materiais em lote.");
+    } finally {
+      setIsDrivePublishing(false);
+    }
   };
 
   const handleDeleteFolder = (id: string, name: string) => {
@@ -488,6 +573,7 @@ function AdminMateriaisPage() {
     showMaterialModal ||
     editMatId !== null ||
     showFolderModal ||
+    showDriveImportModal ||
     lightboxFiles.length > 0;
 
   useEffect(() => {
@@ -1061,14 +1147,23 @@ function AdminMateriaisPage() {
 
           <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
             <button
+              type="button"
+              onClick={() => openDriveImportModal(currentFolderId || "")}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-sky-500/40 bg-sky-500/10 px-4 py-2 text-xs font-semibold text-sky-400 hover:bg-sky-500/20 transition shadow-xs cursor-pointer"
+            >
+              <FolderOpen className="h-4 w-4" /> Importar do Drive
+            </button>
+            <button
+              type="button"
               onClick={openNewFolderModal}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-gold/40 bg-card px-4 py-2 text-xs font-semibold text-gold hover:bg-gold/10 transition shadow-xs"
+              className="inline-flex items-center gap-1.5 rounded-xl border border-gold/40 bg-card px-4 py-2 text-xs font-semibold text-gold hover:bg-gold/10 transition shadow-xs cursor-pointer"
             >
               <FolderPlus className="h-4 w-4" /> Nova Pasta
             </button>
             <button
+              type="button"
               onClick={() => openNewMaterialModal(currentFolderId || "")}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-gold-gradient px-4 py-2 text-xs font-semibold text-primary-foreground shadow-gold hover:brightness-105 transition"
+              className="inline-flex items-center gap-1.5 rounded-xl bg-gold-gradient px-4 py-2 text-xs font-semibold text-primary-foreground shadow-gold hover:brightness-105 transition cursor-pointer"
             >
               <Plus className="h-4 w-4" /> Novo Material
             </button>
@@ -1145,7 +1240,28 @@ function AdminMateriaisPage() {
               </div>
             </div>
 
-            <div className="flex items-center gap-1.5 shrink-0">
+            <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
+              <button
+                type="button"
+                onClick={() => openDriveImportModal(currentFolder.id)}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-sky-500/40 bg-sky-500/15 px-3 py-1.5 text-xs font-semibold text-sky-400 hover:bg-sky-500/25 transition cursor-pointer"
+                title="Importar do Google Drive para esta pasta"
+              >
+                <FolderOpen className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Importar do Drive</span>
+              </button>
+              {currentFolder.driveUrl && (
+                <a
+                  href={currentFolder.driveUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-border/60 bg-card px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-muted transition cursor-pointer"
+                  title="Abrir no Google Drive"
+                >
+                  <ExternalLink className="h-3.5 w-3.5 text-sky-400" />
+                  <span className="hidden sm:inline">Abrir no Drive</span>
+                </a>
+              )}
               <button
                 type="button"
                 onClick={() => openEditFolderModal(currentFolder)}
@@ -1373,6 +1489,24 @@ function AdminMateriaisPage() {
                   placeholder="Ex: Provas sociais e fotos reais de clientes..."
                   className="mt-1 h-10 w-full rounded-xl border bg-background px-3 text-sm outline-none focus:border-gold"
                 />
+              </label>
+              <label className="block">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium flex items-center gap-1.5">
+                    <FolderOpen className="h-3.5 w-3.5 text-sky-400" />
+                    <span>Link da Pasta no Google Drive (opcional)</span>
+                  </span>
+                  <span className="text-[10px] text-sky-400 font-mono">0 MB no Supabase</span>
+                </div>
+                <input
+                  value={folderDriveUrl}
+                  onChange={(e) => setFolderDriveUrl(e.target.value)}
+                  placeholder="https://drive.google.com/drive/folders/..."
+                  className="mt-1 h-10 w-full rounded-xl border border-sky-500/30 bg-background px-3 text-xs font-mono outline-none focus:border-sky-400"
+                />
+                <span className="text-[10px] text-muted-foreground mt-1 block">
+                  Permite aos afiliados abrir e navegar em todos os arquivos diretamente no Google Drive.
+                </span>
               </label>
               <div>
                 <span className="text-xs font-medium block mb-2">Cor de Destaque</span>
@@ -2185,6 +2319,251 @@ function AdminMateriaisPage() {
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* ── MODAL IMPORTAR MATERIAIS DO GOOGLE DRIVE ─────────────────────── */}
+      {showDriveImportModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/80 backdrop-blur-sm animate-in fade-in">
+          <div className="w-full max-w-2xl flex flex-col max-h-[90vh] rounded-3xl border border-sky-500/30 bg-card shadow-2xl animate-in zoom-in-95 overflow-hidden">
+            {/* Header */}
+            <div className="shrink-0 flex items-center justify-between border-b border-border/40 px-6 py-4 bg-card/95 backdrop-blur-sm">
+              <div className="flex items-center gap-2.5">
+                <div className="grid h-9 w-9 place-items-center rounded-xl bg-sky-500/15 border border-sky-500/30">
+                  <FolderOpen className="h-5 w-5 text-sky-400" />
+                </div>
+                <div>
+                  <h3 className="text-base font-semibold text-foreground">Importar Materiais do Google Drive</h3>
+                  <p className="text-[11px] text-muted-foreground">PDFs, Manuais, ZIPs e Documentos com 0 MB de consumo no Supabase</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowDriveImportModal(false);
+                  setDriveImportItems([]);
+                  setDriveLinksInput("");
+                }}
+                className="rounded-full p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Corpo rolável */}
+            <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5 custom-scrollbar">
+              {/* Seletor de Pasta de Destino */}
+              <div className="rounded-2xl border border-sky-500/30 bg-sky-500/10 p-3.5 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                    <Folder className="h-4 w-4 text-sky-400" />
+                    <span>Pasta de Destino dos Materiais:</span>
+                  </label>
+                  {driveImportFolderId ? (
+                    <span className="text-[10px] text-sky-400 font-mono font-medium">
+                      ✓ Vinculado à pasta
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-muted-foreground font-mono">
+                      Pasta Geral / Raiz
+                    </span>
+                  )}
+                </div>
+                <select
+                  value={driveImportFolderId}
+                  onChange={(e) => setDriveImportFolderId(e.target.value)}
+                  className="h-10 w-full rounded-xl border border-sky-500/40 bg-background px-3 text-xs font-medium text-foreground outline-none focus:border-sky-400 transition"
+                >
+                  <option value="">📁 Raiz (Arquivos Gerais / Sem Pasta)</option>
+                  {foldersList.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      📁 {f.name} {f.id === currentFolderId ? "(Pasta Atual)" : ""}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[10px] text-muted-foreground">
+                  Os materiais entrarão organizados nesta pasta para os afiliados.
+                </p>
+              </div>
+
+              {/* Guia explicativo */}
+              <div className="rounded-2xl border border-sky-500/20 bg-sky-500/5 p-4 space-y-2">
+                <div className="flex items-center gap-2 text-sky-400 font-semibold text-xs">
+                  <Info className="h-3.5 w-3.5 shrink-0" />
+                  <span>Como obter os links de arquivos do Google Drive:</span>
+                </div>
+                <ol className="text-[11px] text-muted-foreground space-y-1 pl-4 list-decimal">
+                  <li>No Google Drive, clique com o botão direito no arquivo desejado (PDF, ZIP, DOCX, etc.).</li>
+                  <li>Clique em <strong className="text-foreground">Compartilhar</strong> → <strong className="text-foreground">Copiar link</strong>.</li>
+                  <li>Certifique-se de que o acesso geral está em <strong className="text-foreground">"Qualquer pessoa com o link"</strong>.</li>
+                  <li>Cole os links abaixo (você pode colar vários de uma vez, um por linha).</li>
+                </ol>
+                <p className="text-[10px] text-sky-400 font-mono pt-1">
+                  ⚡ O sistema gera links de download direto automático e não consome nada da sua quota do Supabase!
+                </p>
+              </div>
+
+              {/* Textarea de links */}
+              <div className="space-y-2">
+                <label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                  <Link2 className="h-3.5 w-3.5 text-sky-400" />
+                  <span>Links do Google Drive (um por linha):</span>
+                </label>
+                <textarea
+                  value={driveLinksInput}
+                  onChange={(e) => setDriveLinksInput(e.target.value)}
+                  placeholder={"https://drive.google.com/file/d/1ctGCno_yeHkNZjp.../view\nhttps://drive.google.com/file/d/1t_NPr_Ym000tf.../view\nhttps://drive.google.com/file/d/19QjoK_XlnApg.../view"}
+                  rows={4}
+                  className="w-full rounded-xl border border-border/80 bg-background px-3 py-2.5 text-xs font-mono outline-none focus:border-sky-500 resize-none custom-scrollbar"
+                />
+                <button
+                  type="button"
+                  onClick={handleDriveProcessLinks}
+                  disabled={!driveLinksInput.trim() || isDriveProcessing}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-sky-500 hover:bg-sky-400 px-4 py-2 text-xs font-semibold text-white shadow-sm transition disabled:opacity-50 cursor-pointer"
+                >
+                  {isDriveProcessing ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      <span>Processando links...</span>
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="h-3.5 w-3.5" />
+                      <span>Processar Links do Drive</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {/* Lista de Pré-Visualização Editável */}
+              {driveImportItems.length > 0 && (
+                <div className="space-y-3 pt-2">
+                  <div className="flex items-center justify-between border-b border-border/40 pb-2">
+                    <span className="text-xs font-semibold text-foreground">
+                      Arquivos Reconhecidos ({driveImportItems.filter((i) => i.isValid).length} válidos)
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setDriveImportItems([])}
+                      className="text-[11px] text-muted-foreground hover:text-red-400 transition cursor-pointer"
+                    >
+                      Limpar lista
+                    </button>
+                  </div>
+
+                  <div className="space-y-2.5">
+                    {driveImportItems.map((item) => (
+                      <div
+                        key={item.id}
+                        className={`rounded-2xl border p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition ${
+                          item.isValid
+                            ? "border-sky-500/30 bg-sky-500/5 hover:border-sky-500/50"
+                            : "border-amber-500/30 bg-amber-500/5"
+                        }`}
+                      >
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                          <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-card border border-border/60">
+                            {item.kind === "ZIP" ? (
+                              <Package className="h-4 w-4 text-amber-400" />
+                            ) : item.kind === "DOCX" ? (
+                              <FileText className="h-4 w-4 text-blue-400" />
+                            ) : (
+                              <FileUp className="h-4 w-4 text-rose-400" />
+                            )}
+                          </div>
+                          <div className="min-w-0 flex-1 space-y-1">
+                            <input
+                              value={item.title}
+                              onChange={(e) => updateDriveImportItem(item.id, { title: e.target.value })}
+                              placeholder="Título do Material..."
+                              className="h-8 w-full rounded-lg border border-border/60 bg-background px-2.5 text-xs font-semibold text-foreground outline-none focus:border-sky-400"
+                            />
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <select
+                                value={item.kind}
+                                onChange={(e) => updateDriveImportItem(item.id, { kind: e.target.value })}
+                                className="h-6 rounded-md border border-border/60 bg-background px-2 text-[10px] font-semibold text-foreground outline-none"
+                              >
+                                <option value="PDF">PDF</option>
+                                <option value="ZIP">ZIP</option>
+                                <option value="DOCX">DOCX</option>
+                                <option value="XLSX">XLSX</option>
+                                <option value="VÍDEO">VÍDEO</option>
+                                <option value="IMAGEM">IMAGEM</option>
+                                <option value="LINK">LINK</option>
+                              </select>
+                              <span className="text-[10px] text-sky-400 font-mono">
+                                Google Drive
+                              </span>
+                              {!item.isValid && (
+                                <span className="text-[10px] text-amber-400">
+                                  {item.isFolder ? "Link de pasta (use arquivos)" : "ID inválido"}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => removeDriveImportItem(item.id)}
+                          className="shrink-0 p-1.5 rounded-lg text-muted-foreground hover:text-red-400 hover:bg-red-500/10 transition cursor-pointer self-end sm:self-center"
+                          title="Remover este item"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Rodapé com Ações */}
+            <div className="shrink-0 flex items-center justify-between border-t border-border/40 px-6 py-4 bg-card/95 backdrop-blur-sm">
+              <div className="text-[11px] text-muted-foreground hidden sm:flex items-center gap-1.5">
+                <Check className="h-3.5 w-3.5 text-emerald-400" />
+                <span>0 MB no Supabase · Download direto para os afiliados</span>
+              </div>
+              <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowDriveImportModal(false);
+                    setDriveImportItems([]);
+                    setDriveLinksInput("");
+                  }}
+                  className="rounded-xl border px-4 py-2 text-xs font-semibold hover:bg-muted transition cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDrivePublishAll}
+                  disabled={
+                    isDrivePublishing ||
+                    driveImportItems.filter((i) => i.isValid).length === 0
+                  }
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-sky-500 hover:bg-sky-400 px-5 py-2 text-xs font-semibold text-white shadow-sm transition disabled:opacity-50 cursor-pointer"
+                >
+                  {isDrivePublishing ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      <span>Publicando...</span>
+                    </>
+                  ) : (
+                    <>
+                      <FolderOpen className="h-3.5 w-3.5" />
+                      <span>
+                        Publicar {driveImportItems.filter((i) => i.isValid).length} Material(is)
+                      </span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

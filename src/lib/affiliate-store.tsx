@@ -119,6 +119,7 @@ export interface MaterialFolder {
   description?: string;
   icon?: string;
   color?: string;
+  driveUrl?: string; // Link da pasta no Google Drive (opcional)
   createdAt?: string;
 }
 
@@ -248,8 +249,8 @@ interface AffiliateStoreContextType {
   creativeFoldersList: CreativeFolder[];
 
   // Folders Actions
-  createFolder: (data: { name: string; description?: string; color?: string; icon?: string }) => Promise<void>;
-  updateFolder: (id: string, data: { name?: string; description?: string; color?: string; icon?: string }) => Promise<void>;
+  createFolder: (data: { name: string; description?: string; color?: string; icon?: string; driveUrl?: string }) => Promise<void>;
+  updateFolder: (id: string, data: { name?: string; description?: string; color?: string; icon?: string; driveUrl?: string }) => Promise<void>;
   deleteFolder: (id: string) => Promise<void>;
 
   // Creative Folders Actions (Grupos / Coleções Estilo Kiwify)
@@ -349,6 +350,16 @@ interface AffiliateStoreContextType {
     files?: MaterialFileItem[];
     folderId?: string;
   }) => Promise<void>;
+  createMaterialsBatch: (
+    items: {
+      title: string;
+      kind: string;
+      size?: string;
+      file_url: string;
+      folderId?: string;
+      rawFileName?: string;
+    }[]
+  ) => Promise<void>;
   updateMaterial: (
     id: string,
     data: {
@@ -1855,6 +1866,7 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
             name: f.name,
             description: f.description || null,
             color: f.color || "gold",
+            drive_url: f.driveUrl || null,
             order_index: idx,
           }));
           await supabase.from("material_folders").upsert(rowsToInsert);
@@ -1866,6 +1878,7 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
           name: f.name,
           description: f.description || "",
           color: f.color || "gold",
+          driveUrl: f.drive_url || undefined,
           createdAt: f.created_at,
         }));
 
@@ -3281,6 +3294,56 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
     toast.success("Material oficial publicado!");
   };
 
+  const createMaterialsBatch = async (
+    items: {
+      title: string;
+      kind: string;
+      size?: string;
+      file_url: string;
+      folderId?: string;
+      rawFileName?: string;
+    }[]
+  ) => {
+    if (items.length === 0) return;
+    const newItems: DynamicMaterial[] = items.map((item, idx) => ({
+      id: `mat-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 6)}`,
+      title: item.title.trim(),
+      kind: item.kind.toUpperCase(),
+      size: item.size || "Google Drive",
+      file_url: item.file_url,
+      sourceType: "link",
+      rawFileName: item.rawFileName || item.title.trim(),
+      folderId: item.folderId,
+    }));
+
+    if (isSupabaseConfigured && supabase) {
+      try {
+        const rows = newItems.map((m, idx) => ({
+          id: m.id,
+          title: m.title,
+          kind: m.kind,
+          size: m.size,
+          file_url: m.file_url || null,
+          raw_file_name: m.rawFileName || null,
+          source_type: "link",
+          mime_type: null,
+          folder_id: m.folderId || null,
+          order_index: materialsList.length + idx,
+        }));
+        await supabase.from("materials").upsert(rows);
+      } catch (err) {
+        console.warn("[AffiliateStore] Falha ao persistir lote de materiais no Supabase:", err);
+      }
+    }
+
+    const updated = [...materialsList, ...newItems];
+    setMaterialsList(updated);
+    try {
+      localStorage.setItem(STORAGE_KEYS.MATERIALS, JSON.stringify(updated));
+    } catch {}
+    toast.success(`${newItems.length} material(is) do Google Drive publicado(s) com sucesso!`);
+  };
+
   const updateMaterial = async (
     id: string,
     data: {
@@ -3404,13 +3467,14 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
   };
 
   // ── FOLDERS CRUD ───────────────────────────────────────────────────────────
-  const createFolder = async (data: { name: string; description?: string; color?: string; icon?: string }) => {
+  const createFolder = async (data: { name: string; description?: string; color?: string; icon?: string; driveUrl?: string }) => {
     const newFolder: MaterialFolder = {
       id: `folder-${Date.now()}`,
       name: data.name.trim(),
       description: data.description?.trim(),
       color: data.color || "gold",
       icon: data.icon || "Folder",
+      driveUrl: data.driveUrl?.trim() || undefined,
       createdAt: new Date().toISOString(),
     };
 
@@ -3421,6 +3485,7 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
           name: newFolder.name,
           description: newFolder.description || null,
           color: newFolder.color || "gold",
+          drive_url: newFolder.driveUrl || null,
           order_index: foldersList.length,
         });
       } catch (err) {
@@ -3434,7 +3499,7 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
     toast.success(`Pasta "${newFolder.name}" criada!`);
   };
 
-  const updateFolder = async (id: string, data: { name?: string; description?: string; color?: string; icon?: string }) => {
+  const updateFolder = async (id: string, data: { name?: string; description?: string; color?: string; icon?: string; driveUrl?: string }) => {
     const updated = foldersList.map((f) => {
       if (f.id !== id) return f;
       return {
@@ -3443,6 +3508,7 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
         description: data.description?.trim() ?? f.description,
         color: data.color ?? f.color,
         icon: data.icon ?? f.icon,
+        driveUrl: data.driveUrl !== undefined ? data.driveUrl.trim() : f.driveUrl,
       };
     });
 
@@ -3453,6 +3519,7 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
           name: targetFolder.name,
           description: targetFolder.description || null,
           color: targetFolder.color || "gold",
+          drive_url: targetFolder.driveUrl || null,
         }).eq("id", id);
       } catch (err) {
         console.warn("[AffiliateStore] Falha ao atualizar pasta no Supabase:", err);
@@ -4114,6 +4181,7 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
       updateCreative,
       deleteCreative,
       createMaterial,
+      createMaterialsBatch,
       updateMaterial,
       deleteMaterial,
       createAffiliateLink,
