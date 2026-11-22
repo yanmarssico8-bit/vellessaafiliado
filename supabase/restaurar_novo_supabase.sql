@@ -91,6 +91,18 @@ CREATE TABLE IF NOT EXISTS public.creatives (
 ALTER TABLE public.creatives ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Allow all creatives" ON public.creatives FOR ALL TO authenticated, anon USING (true) WITH CHECK (true);
 
+CREATE TABLE IF NOT EXISTS public.material_folders (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  color TEXT DEFAULT 'gold',
+  drive_url TEXT,
+  order_index INT DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE public.material_folders ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow all material_folders" ON public.material_folders FOR ALL TO authenticated, anon USING (true) WITH CHECK (true);
+
 CREATE TABLE IF NOT EXISTS public.materials (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
