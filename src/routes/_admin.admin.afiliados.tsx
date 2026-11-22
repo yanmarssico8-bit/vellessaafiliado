@@ -148,32 +148,146 @@ function AdminAfiliadosPage() {
           .order("created_at", { ascending: false })
           .range(0, 99);
 
+        // ── 1. Buscar progresso real de aulas de todos os afiliados no Supabase
+        const progressByUser = new Map<string, {
+          completedIds: string[];
+          watchProgress: Record<string, number>;
+          watchSeconds: Record<string, number>;
+          startedAt: Record<string, string>;
+          lastLessonTitle?: string;
+          lastLessonAt?: string;
+        }>();
+
+        try {
+          const { data: progressData } = await supabase
+            .from("lesson_progress")
+            .select("*");
+
+          if (progressData) {
+            progressData.forEach((row: any) => {
+              const uid = row.user_id;
+              if (!uid) return;
+              if (!progressByUser.has(uid)) {
+                progressByUser.set(uid, {
+                  completedIds: [],
+                  watchProgress: {},
+                  watchSeconds: {},
+                  startedAt: {},
+                });
+              }
+              const entry = progressByUser.get(uid)!;
+              if (row.completed && row.lesson_id) {
+                if (!entry.completedIds.includes(row.lesson_id)) {
+                  entry.completedIds.push(row.lesson_id);
+                }
+              }
+              if (row.watch_pct !== undefined && row.watch_pct !== null && row.lesson_id) {
+                entry.watchProgress[row.lesson_id] = row.watch_pct;
+              }
+              if (row.watch_seconds !== undefined && row.watch_seconds !== null && row.lesson_id) {
+                entry.watchSeconds[row.lesson_id] = row.watch_seconds;
+              }
+              if (row.started_at && row.lesson_id) {
+                entry.startedAt[row.lesson_id] = row.started_at;
+              }
+              if (row.lesson_title && (!entry.lastLessonAt || new Date(row.updated_at || row.started_at) > new Date(entry.lastLessonAt))) {
+                entry.lastLessonTitle = row.lesson_title;
+                entry.lastLessonAt = row.updated_at || row.started_at;
+              }
+            });
+          }
+        } catch (err) {
+          console.warn("[AdminAfiliados] Erro ao carregar lesson_progress do Supabase:", err);
+        }
+
+        // ── 2. Buscar eventos reais (downloads, cliques, acessos) de todos os afiliados
+        const eventsByUser = new Map<string, {
+          downloads: any[];
+          clicks: any[];
+        }>();
+
+        try {
+          const { data: eventsData } = await supabase
+            .from("affiliate_events")
+            .select("*")
+            .order("created_at", { ascending: false })
+            .limit(1000);
+
+          if (eventsData) {
+            eventsData.forEach((ev: any) => {
+              const uid = ev.user_id;
+              if (!uid) return;
+              if (!eventsByUser.has(uid)) {
+                eventsByUser.set(uid, { downloads: [], clicks: [] });
+              }
+              const entry = eventsByUser.get(uid)!;
+              if (ev.event_type === "material_download" && ev.payload) {
+                entry.downloads.push({
+                  materialId: ev.payload.material_id,
+                  materialName: ev.payload.material_name,
+                  format: ev.payload.format,
+                  downloadedAt: ev.created_at,
+                });
+              } else if (ev.event_type === "link_click" && ev.payload) {
+                entry.clicks.push({
+                  linkId: ev.payload.link_id,
+                  linkLabel: ev.payload.link_label,
+                  linkUrl: ev.payload.link_url,
+                  clickedAt: ev.created_at,
+                });
+              }
+            });
+          }
+        } catch (err) {
+          console.warn("[AdminAfiliados] Erro ao carregar affiliate_events do Supabase:", err);
+        }
+
         if (error) {
           console.warn("[AdminAfiliados] Erro ao buscar perfis do Supabase:", error);
           toast.error(`Aviso Supabase: ${error.message}`);
         } else if (data) {
-          supabaseItems = data.map((p) => ({
-            id: p.affiliate_code || p.id.slice(0, 8),
-            rawId: p.id,
-            name: p.name,
-            email: p.email,
-            level: p.level || "Afiliado(a) Ouro",
-            status: p.status === "suspended" ? "Suspenso" : (p.status === "active" ? "Ativo" : (p.status || "Ativo")),
-            rawStatus: p.status || "active",
-            phone: p.phone || "",
-            instagram: p.instagram || "",
-            role: p.role || "affiliate",
-            pixKey: p.pix_key || "",
-            commissionRate: p.commission_rate ?? 0.60,
-            date: new Date(p.created_at).toLocaleDateString("pt-BR"),
-            createdAt: p.created_at,
-            onboardingCompleted: p.onboarding_completed,
-            trafficExperience: p.traffic_experience,
-            trafficInvestment: p.traffic_investment,
-            trafficWillingness: p.traffic_willingness,
-            trafficBudget: p.traffic_budget,
-            onboardingAnswers: p.onboarding_answers,
-          }));
+          supabaseItems = data.map((p) => {
+            const prog = progressByUser.get(p.id) || {
+              completedIds: [],
+              watchProgress: {},
+              watchSeconds: {},
+              startedAt: {},
+            };
+            const evs = eventsByUser.get(p.id) || { downloads: [], clicks: [] };
+
+            return {
+              id: p.affiliate_code || p.id.slice(0, 8),
+              rawId: p.id,
+              name: p.name,
+              email: p.email,
+              level: p.level || "Afiliado(a) Ouro",
+              status: p.status === "suspended" ? "Suspenso" : (p.status === "active" ? "Ativo" : (p.status || "Ativo")),
+              rawStatus: p.status || "active",
+              phone: p.phone || "",
+              instagram: p.instagram || "",
+              role: p.role || "affiliate",
+              pixKey: p.pix_key || "",
+              commissionRate: p.commission_rate ?? 0.60,
+              date: new Date(p.created_at).toLocaleDateString("pt-BR"),
+              createdAt: p.created_at,
+              lastLoginAt: p.last_seen_at || null,
+              loginCount: p.login_count || (p.last_seen_at ? 1 : 0),
+              completedLessonIds: prog.completedIds,
+              watchProgressPerLesson: prog.watchProgress,
+              watchSecondsPerLesson: prog.watchSeconds,
+              lessonStartedAt: prog.startedAt,
+              lastLessonWatchedTitle: prog.lastLessonTitle,
+              lastLessonWatchedAt: prog.lastLessonAt,
+              downloadedMaterials: evs.downloads,
+              clickedLinks: evs.clicks,
+              onboardingCompleted: p.onboarding_completed,
+              trafficExperience: p.traffic_experience,
+              trafficInvestment: p.traffic_investment,
+              trafficWillingness: p.traffic_willingness,
+              trafficBudget: p.traffic_budget,
+              onboardingAnswers: p.onboarding_answers,
+            };
+          });
         }
       } catch (e: any) {
         console.warn("Could not fetch profiles from Supabase:", e);
@@ -228,11 +342,55 @@ function AdminAfiliadosPage() {
     return dbAffiliates.map((a) => {
       const monKey = a.email || a.id;
       const mon = affiliatesMonitoring[monKey] || {};
-      const completedCount = (mon.completedLessonIds || []).length;
+
+      const completedLessonIds = Array.from(
+        new Set([
+          ...(a.completedLessonIds || []),
+          ...(mon.completedLessonIds || []),
+        ])
+      );
+      const completedCount = completedLessonIds.length;
       const pct = totalLessons > 0 ? Math.round((completedCount / totalLessons) * 100) : 0;
+
+      const watchProgressPerLesson = {
+        ...(a.watchProgressPerLesson || {}),
+        ...(mon.watchProgressPerLesson || {}),
+      };
+
+      const watchSecondsPerLesson = {
+        ...(a.watchSecondsPerLesson || {}),
+        ...(mon.watchSecondsPerLesson || {}),
+      };
+
+      const lessonStartedAt = {
+        ...(a.lessonStartedAt || {}),
+        ...(mon.lessonStartedAt || {}),
+      };
+
+      const downloadedMaterials = [
+        ...(a.downloadedMaterials || []),
+        ...(mon.downloadedMaterials || []),
+      ];
+
+      const clickedLinks = [
+        ...(a.clickedLinks || []),
+        ...(mon.clickedLinks || []),
+      ];
+
+      const lastLoginAt = a.lastLoginAt || mon.lastLoginAt || null;
+      const loginCount = Math.max(a.loginCount || 0, mon.loginCount || 0);
+
       return {
         ...a,
         ...mon,
+        completedLessonIds,
+        watchProgressPerLesson,
+        watchSecondsPerLesson,
+        lessonStartedAt,
+        downloadedMaterials,
+        clickedLinks,
+        lastLoginAt,
+        loginCount,
         progressPct: pct,
         completedCount,
         totalLessons,

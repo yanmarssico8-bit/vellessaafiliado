@@ -131,6 +131,49 @@ CREATE TABLE IF NOT EXISTS public.affiliate_links (
 ALTER TABLE public.affiliate_links ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Allow all affiliate_links" ON public.affiliate_links FOR ALL TO authenticated, anon USING (true) WITH CHECK (true);
 
+-- ── TABELA LESSON_PROGRESS (PROGRESSO REAL POR AULA/AFILIADO) ─────────────────
+CREATE TABLE IF NOT EXISTS public.lesson_progress (
+  id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id       UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  lesson_id     TEXT NOT NULL,
+  lesson_title  TEXT,
+  module_id     TEXT,
+  module_title  TEXT,
+  started_at    TIMESTAMPTZ DEFAULT NOW(),
+  completed     BOOLEAN DEFAULT FALSE,
+  completed_at  TIMESTAMPTZ,
+  watch_pct     NUMERIC DEFAULT 0,
+  watch_seconds INTEGER DEFAULT 0,
+  updated_at    TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(user_id, lesson_id)
+);
+ALTER TABLE public.lesson_progress ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "lesson_progress_self" ON public.lesson_progress
+  FOR ALL TO authenticated USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "lesson_progress_admin_read" ON public.lesson_progress
+  FOR SELECT TO authenticated USING (true);
+
+-- ── TABELA AFFILIATE_EVENTS (TELEMETRIA UNIVERSAL DE EVENTOS) ──────────────────
+CREATE TABLE IF NOT EXISTS public.affiliate_events (
+  id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id     UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  event_type  TEXT NOT NULL,
+  payload     JSONB,
+  created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_affiliate_events_user_id ON public.affiliate_events(user_id);
+CREATE INDEX IF NOT EXISTS idx_affiliate_events_type ON public.affiliate_events(event_type);
+CREATE INDEX IF NOT EXISTS idx_affiliate_events_created_at ON public.affiliate_events(created_at DESC);
+ALTER TABLE public.affiliate_events ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "aff_events_insert_self" ON public.affiliate_events
+  FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "aff_events_read_all" ON public.affiliate_events
+  FOR SELECT TO authenticated USING (true);
+
+-- ── COLUNA LAST_SEEN_AT NO PROFILES (ATUALIZADA A CADA LOGIN) ─────────────────
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS login_count INTEGER DEFAULT 0;
+
 -- 4. RESTAURAÇÃO DOS 15 AFILIADOS CADASTRADOS (DADOS REAIS PRESERVADOS)
 INSERT INTO public.profiles (id, email, name, first_name, phone, role, created_at, onboarding_completed)
 VALUES

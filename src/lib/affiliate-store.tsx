@@ -177,6 +177,23 @@ export interface AffiliateMonitoringData {
   completedLessonIds: string[];
   lastLessonWatchedTitle?: string;
   lastLessonWatchedAt?: string;
+  // ── TELEMETRIA EXPANDIDA ──────────────────────────────────────────────────────
+  watchProgressPerLesson?: Record<string, number>; // lesson_id → % assistida (0-100)
+  watchSecondsPerLesson?: Record<string, number>;  // lesson_id → segundos assistidos
+  lessonStartedAt?: Record<string, string>;         // lesson_id → ISO date do primeiro acesso
+  downloadedMaterials?: {
+    materialId: string;
+    materialName: string;
+    format: string;
+    downloadedAt: string;
+  }[];
+  clickedLinks?: {
+    linkId: string;
+    linkLabel: string;
+    linkUrl: string;
+    clickedAt: string;
+  }[];
+  // ── ONBOARDING ───────────────────────────────────────────────────────────────
   onboardingCompleted?: boolean;
   trafficExperience?: "yes" | "no";
   trafficInvestment?: string;
@@ -239,6 +256,10 @@ interface AffiliateStoreContextType {
   affiliatesMonitoring: Record<string, AffiliateMonitoringData>;
   recordAffiliateActivity: (data: { affiliateId: string; name?: string; email?: string; completedLessonId?: string; lessonTitle?: string }) => void;
   recordAffiliateAccess: (prof: AffiliateProfile) => void;
+  recordLessonStart: (lessonId: string, lessonTitle: string, moduleId?: string, moduleTitle?: string) => void;
+  recordWatchProgress: (lessonId: string, pct: number, seconds: number) => void;
+  recordMaterialDownload: (material: { materialId: string; materialName: string; format: string }) => void;
+  recordLinkClick: (link: { linkId: string; linkLabel: string; linkUrl: string }) => void;
   updateAffiliateMonitoring: (emailOrId: string, data: Partial<AffiliateMonitoringData>) => void;
   deleteAffiliateMonitoring: (emailOrId: string) => void;
 
@@ -1075,6 +1096,25 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
         } catch {}
         return next;
       });
+
+      // Se concluiu aula, registra evento no Supabase
+      if (data.completedLessonId && isSupabaseConfigured && supabase) {
+        supabase.auth.getSession().then(({ data: { session } }) => {
+          if (session?.user?.id) {
+            supabase
+              .from("affiliate_events")
+              .insert({
+                user_id: session.user.id,
+                event_type: "lesson_complete",
+                payload: {
+                  lesson_id: data.completedLessonId,
+                  lesson_title: data.lessonTitle,
+                },
+              })
+              .then(() => {});
+          }
+        }).catch(() => {});
+      }
     },
     []
   );
@@ -1124,6 +1164,35 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
         } catch {}
         return next;
       });
+
+      // Sincroniza last_seen_at e registra evento de login no Supabase
+      if (isSupabaseConfigured && supabase) {
+        supabase.auth.getSession().then(({ data: { session } }) => {
+          if (session?.user?.id) {
+            supabase
+              .from("profiles")
+              .update({
+                last_seen_at: now,
+              })
+              .eq("id", session.user.id)
+              .then(() => {});
+
+            supabase
+              .from("affiliate_events")
+              .insert({
+                user_id: session.user.id,
+                event_type: "login",
+                payload: {
+                  name: prof.name,
+                  email: prof.email,
+                  role: prof.role,
+                  accessed_at: now,
+                },
+              })
+              .then(() => {});
+          }
+        }).catch(() => {});
+      }
     },
     []
   );
@@ -1173,6 +1242,177 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
       return next;
     });
   }, []);
+
+  // ── TELEMETRIA: INÍCIO DE AULA ─────────────────────────────────────────────
+  const recordLessonStart = useCallback((lessonId: string, lessonTitle: string, moduleId?: string, moduleTitle?: string) => {
+    const key = profile.id || profile.email;
+    if (!key || !lessonId) return;
+    const now = new Date().toISOString();
+
+    setAffiliatesMonitoring((prev) => {
+      const existing = prev[key] || {
+        affiliateId: key, name: profile.name, email: profile.email,
+        level: profile.level || "Afiliado", role: profile.role || "affiliate",
+        createdAt: now, lastLoginAt: now, loginCount: 1, completedLessonIds: [],
+      };
+      const startedAt = { ...(existing.lessonStartedAt || {}) };
+      if (!startedAt[lessonId]) startedAt[lessonId] = now;
+      const updated: AffiliateMonitoringData = {
+        ...existing,
+        lessonStartedAt: startedAt,
+        lastLessonWatchedTitle: lessonTitle,
+        lastLessonWatchedAt: now,
+      };
+      const next = { ...prev, [key]: updated };
+      try { localStorage.setItem(STORAGE_KEYS.AFFILIATES_MONITORING, JSON.stringify(next)); } catch {}
+      return next;
+    });
+
+    // Supabase: lesson_progress upsert (started_at)
+    if (isSupabaseConfigured && supabase) {
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        if (session?.user?.id) {
+          supabase.from("lesson_progress").upsert({
+            user_id: session.user.id,
+            lesson_id: lessonId,
+            lesson_title: lessonTitle,
+            module_id: moduleId || null,
+            module_title: moduleTitle || null,
+            started_at: now,
+            updated_at: now,
+          }, { onConflict: "user_id,lesson_id", ignoreDuplicates: true }).then(() => {});
+        }
+      }).catch(() => {});
+    }
+
+    // Evento de telemetria
+    if (isSupabaseConfigured && supabase) {
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        if (session?.user?.id) {
+          supabase.from("affiliate_events").insert({
+            user_id: session.user.id,
+            event_type: "lesson_start",
+            payload: { lesson_id: lessonId, lesson_title: lessonTitle, module_id: moduleId, module_title: moduleTitle },
+          }).then(() => {});
+        }
+      }).catch(() => {});
+    }
+  }, [profile]);
+
+  // ── TELEMETRIA: PROGRESSO DE VÍDEO ────────────────────────────────────────
+  const recordWatchProgress = useCallback((lessonId: string, pct: number, seconds: number) => {
+    const key = profile.id || profile.email;
+    if (!key || !lessonId) return;
+    const now = new Date().toISOString();
+
+    setAffiliatesMonitoring((prev) => {
+      const existing = prev[key];
+      if (!existing) return prev;
+      const prevPct = (existing.watchProgressPerLesson || {})[lessonId] || 0;
+      if (pct <= prevPct) return prev; // Só avança, nunca regride
+      const updated: AffiliateMonitoringData = {
+        ...existing,
+        watchProgressPerLesson: { ...(existing.watchProgressPerLesson || {}), [lessonId]: pct },
+        watchSecondsPerLesson: { ...(existing.watchSecondsPerLesson || {}), [lessonId]: seconds },
+      };
+      const next = { ...prev, [key]: updated };
+      try { localStorage.setItem(STORAGE_KEYS.AFFILIATES_MONITORING, JSON.stringify(next)); } catch {}
+      return next;
+    });
+
+    // Supabase: lesson_progress upsert (watch_pct, watch_seconds)
+    if (isSupabaseConfigured && supabase) {
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        if (session?.user?.id) {
+          supabase.from("lesson_progress").upsert({
+            user_id: session.user.id,
+            lesson_id: lessonId,
+            watch_pct: pct,
+            watch_seconds: seconds,
+            updated_at: now,
+          }, { onConflict: "user_id,lesson_id" }).then(() => {});
+        }
+      }).catch(() => {});
+    }
+  }, [profile]);
+
+  // ── TELEMETRIA: DOWNLOAD DE MATERIAL ──────────────────────────────────────
+  const recordMaterialDownload = useCallback((material: { materialId: string; materialName: string; format: string }) => {
+    const key = profile.id || profile.email;
+    if (!key) return;
+    const now = new Date().toISOString();
+
+    setAffiliatesMonitoring((prev) => {
+      const existing = prev[key];
+      if (!existing) return prev;
+      const prev_downloads = existing.downloadedMaterials || [];
+      // Evita duplicata na mesma sessão (mesmo material nos últimos 5 minutos)
+      const recentDuplicate = prev_downloads.some(d =>
+        d.materialId === material.materialId &&
+        (Date.now() - new Date(d.downloadedAt).getTime()) < 5 * 60 * 1000
+      );
+      if (recentDuplicate) return prev;
+      const updated: AffiliateMonitoringData = {
+        ...existing,
+        downloadedMaterials: [...prev_downloads, { ...material, downloadedAt: now }],
+      };
+      const next = { ...prev, [key]: updated };
+      try { localStorage.setItem(STORAGE_KEYS.AFFILIATES_MONITORING, JSON.stringify(next)); } catch {}
+      return next;
+    });
+
+    // Supabase: affiliate_events insert
+    if (isSupabaseConfigured && supabase) {
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        if (session?.user?.id) {
+          supabase.from("affiliate_events").insert({
+            user_id: session.user.id,
+            event_type: "material_download",
+            payload: { material_id: material.materialId, material_name: material.materialName, format: material.format },
+          }).then(() => {});
+        }
+      }).catch(() => {});
+    }
+  }, [profile]);
+
+  // ── TELEMETRIA: CLIQUE EM LINK OFICIAL ────────────────────────────────────
+  const recordLinkClick = useCallback((link: { linkId: string; linkLabel: string; linkUrl: string }) => {
+    const key = profile.id || profile.email;
+    if (!key) return;
+    const now = new Date().toISOString();
+
+    setAffiliatesMonitoring((prev) => {
+      const existing = prev[key];
+      if (!existing) return prev;
+      const prev_clicks = existing.clickedLinks || [];
+      // Evita duplicata do mesmo link nos últimos 10 minutos
+      const recentDuplicate = prev_clicks.some(c =>
+        c.linkId === link.linkId &&
+        (Date.now() - new Date(c.clickedAt).getTime()) < 10 * 60 * 1000
+      );
+      if (recentDuplicate) return prev;
+      const updated: AffiliateMonitoringData = {
+        ...existing,
+        clickedLinks: [...prev_clicks, { ...link, clickedAt: now }],
+      };
+      const next = { ...prev, [key]: updated };
+      try { localStorage.setItem(STORAGE_KEYS.AFFILIATES_MONITORING, JSON.stringify(next)); } catch {}
+      return next;
+    });
+
+    // Supabase: affiliate_events insert
+    if (isSupabaseConfigured && supabase) {
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        if (session?.user?.id) {
+          supabase.from("affiliate_events").insert({
+            user_id: session.user.id,
+            event_type: "link_click",
+            payload: { link_id: link.linkId, link_label: link.linkLabel, link_url: link.linkUrl },
+          }).then(() => {});
+        }
+      }).catch(() => {});
+    }
+  }, [profile]);
 
   const isLessonDone = (id: string) => completedLessonIds.includes(id);
 
@@ -4212,6 +4452,10 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
       affiliatesMonitoring,
       recordAffiliateActivity,
       recordAffiliateAccess,
+      recordLessonStart,
+      recordWatchProgress,
+      recordMaterialDownload,
+      recordLinkClick,
       updateAffiliateMonitoring,
       deleteAffiliateMonitoring,
       campaignsList,

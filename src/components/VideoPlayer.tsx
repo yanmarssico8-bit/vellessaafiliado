@@ -11,6 +11,8 @@ interface VideoPlayerProps {
   onToggleTheater?: () => void;
   onAutoComplete?: () => void;
   onDurationDetected?: (duration: string) => void;
+  onWatchProgress?: (pct: number, seconds: number) => void;
+  onPlay?: () => void;
 }
 
 export function extractDriveFileId(url?: string): string | null {
@@ -87,6 +89,8 @@ export function VideoPlayer({
   onToggleTheater,
   onAutoComplete,
   onDurationDetected,
+  onWatchProgress,
+  onPlay,
 }: VideoPlayerProps) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -97,6 +101,8 @@ export function VideoPlayer({
   const [currentDuration, setCurrentDuration] = useState(duration || "");
   const containerRef = useRef<HTMLDivElement>(null);
   const detectedUrlRef = useRef<string | null>(null);
+  // Rastreia quais milestones de % já foram disparados nesta sessão (evita spam)
+  const firedMilestonesRef = useRef<Set<number>>(new Set());
 
   const embedUrl = getEmbedUrl(videoUrl);
   const isGoogleDrive = Boolean(videoUrl && videoUrl.includes("drive.google.com"));
@@ -145,6 +151,7 @@ export function VideoPlayer({
     // Reset playback when video title/duration changes
     setIsPlaying(false);
     setCurrentTime(0);
+    firedMilestonesRef.current = new Set(); // Reset milestones ao trocar de aula
   }, [title, duration]);
 
   useEffect(() => {
@@ -152,24 +159,40 @@ export function VideoPlayer({
     if (isPlaying) {
       timer = setInterval(() => {
         setCurrentTime((prev) => {
-          if (prev >= totalSeconds) {
+          const next = prev + 1;
+          if (next >= totalSeconds) {
             onAutoComplete?.();
-            // Para embeds externos (Google Drive, YouTube), o timer NUNCA derruba o iframe!
-            if (!embedUrl) {
-              setIsPlaying(false);
+            // Dispara 100% ao completar
+            if (onWatchProgress && !firedMilestonesRef.current.has(100)) {
+              firedMilestonesRef.current.add(100);
+              onWatchProgress(100, totalSeconds);
             }
+            if (!embedUrl) setIsPlaying(false);
             return totalSeconds;
           }
-          return prev + 1;
+          // Dispara milestones a cada 10% (10, 20, 30 ... 90)
+          if (totalSeconds > 0 && onWatchProgress) {
+            const pct = Math.floor((next / totalSeconds) * 100);
+            const milestone = Math.floor(pct / 10) * 10;
+            if (milestone > 0 && milestone < 100 && !firedMilestonesRef.current.has(milestone)) {
+              firedMilestonesRef.current.add(milestone);
+              onWatchProgress(milestone, next);
+            }
+          }
+          return next;
         });
       }, 1000 / speed);
     }
     return () => {
       if (timer) clearInterval(timer);
     };
-  }, [isPlaying, speed, totalSeconds, onAutoComplete, embedUrl]);
+  }, [isPlaying, speed, totalSeconds, onAutoComplete, onWatchProgress, embedUrl]);
 
-  const togglePlay = () => setIsPlaying(!isPlaying);
+  const togglePlay = () => {
+    const nextPlaying = !isPlaying;
+    setIsPlaying(nextPlaying);
+    if (nextPlaying) onPlay?.();
+  };
 
   const formatSeconds = (sec: number) => {
     const m = Math.floor(sec / 60);

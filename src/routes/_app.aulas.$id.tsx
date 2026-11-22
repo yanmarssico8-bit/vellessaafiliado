@@ -29,6 +29,8 @@ function LessonPage() {
     modulesList,
     updateLesson,
     syncModulesWithSupabase,
+    recordLessonStart,
+    recordWatchProgress,
   } = useAffiliateStore();
 
   const [theaterMode, setTheaterMode] = useState<boolean>(() => {
@@ -68,6 +70,10 @@ function LessonPage() {
       document.title = `${lesson.title} — Vellessa Afiliados`;
     }
     syncModulesWithSupabase(false);
+    // Telemetria: registra inicio da aula
+    if (lesson?.id && lesson?.title) {
+      recordLessonStart(lesson.id, lesson.title, lesson.module?.id, lesson.module?.title);
+    }
   }, [id, lesson?.title, syncModulesWithSupabase]);
 
   if (!lesson) {
@@ -97,6 +103,9 @@ function LessonPage() {
     },
     [lesson?.id, lesson?.duration, lesson?.module?.id, updateLesson]
   );
+  const handleWatchProgress = useCallback((pct: number, seconds: number) => {
+    if (lesson?.id) recordWatchProgress(lesson.id, pct, seconds);
+  }, [lesson?.id, recordWatchProgress]);
 
   const isVideoLesson = Boolean(lesson.video_url);
   const contentType = lesson.contentType;
@@ -112,6 +121,7 @@ function LessonPage() {
       onToggleTheater={toggleTheaterMode}
       onAutoComplete={handleAutoComplete}
       onDurationDetected={handleDurationDetected}
+      onWatchProgress={handleWatchProgress}
     />
   ) : contentType === "pdf" || (!contentType && contentUrl?.toLowerCase().includes(".pdf")) ? (
     /* ── Luxury PDF Card ── */

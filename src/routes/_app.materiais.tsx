@@ -169,7 +169,7 @@ function Lightbox({ files, startIndex, onClose }: LightboxProps) {
 
 // ── Página de Materiais de Afiliados ───────────────────────────────────────────
 function Materiais() {
-  const { copyText, downloadAsset, profile, linksList, materialsList, foldersList } =
+  const { copyText, downloadAsset, profile, linksList, materialsList, foldersList, recordMaterialDownload, recordLinkClick } =
     useAffiliateStore();
 
   // ── ESTADO DE NAVEGAÇÃO ESPACIAL (FINDER / GOOGLE DRIVE) ────────────────────
@@ -230,6 +230,15 @@ function Materiais() {
     const activeUrl = f.file_url || parentMaterial?.file_url;
     const activeName = f.name || parentMaterial?.rawFileName || `${(parentMaterial?.title || "material").toLowerCase().replace(/[^a-z0-9]/g, "-")}.${(f.kind || parentMaterial?.kind || "doc").toLowerCase()}`;
 
+    // ── TELEMETRIA: Registrar download
+    if (parentMaterial?.id || f.id) {
+      recordMaterialDownload({
+        materialId: parentMaterial?.id || f.id,
+        materialName: parentMaterial?.title || f.name || activeName,
+        format: f.kind || parentMaterial?.kind || "doc",
+      });
+    }
+
     // 1. Se tiver URL pública na nuvem (Supabase Storage ou link direto), baixa direto da nuvem
     if (activeUrl && !activeUrl.startsWith("indexeddb://")) {
       await downloadAsset(activeUrl, activeName);
@@ -259,6 +268,13 @@ function Materiais() {
   };
 
   const handleDownloadAllFiles = async (m: DynamicMaterial) => {
+    // ── TELEMETRIA: Registrar download do pacote completo
+    recordMaterialDownload({
+      materialId: m.id,
+      materialName: m.title,
+      format: m.kind || "pacote",
+    });
+
     // 1. Se for pacote com múltiplos arquivos
     if (m.files && m.files.length > 1) {
       toast.info(`Iniciando download do pacote (${m.files.length} arquivos)...`);
@@ -718,7 +734,10 @@ function Materiais() {
                       {l.url}
                     </span>
                     <button
-                      onClick={() => copyText(l.url, `URL de referência "${l.label}" copiada!`)}
+                      onClick={() => {
+                        copyText(l.url, `URL de referência "${l.label}" copiada!`);
+                        recordLinkClick({ linkId: l.id, linkLabel: l.label, linkUrl: l.url });
+                      }}
                       className="inline-flex items-center gap-1.5 rounded-lg bg-gold-gradient px-2.5 sm:px-3 py-1.5 text-xs font-semibold text-primary-foreground shadow-xs hover:brightness-105 transition shrink-0"
                     >
                       <Copy className="h-3 w-3" /> Copiar
@@ -733,6 +752,7 @@ function Materiais() {
                     href={l.url}
                     target="_blank"
                     rel="noopener noreferrer"
+                    onClick={() => recordLinkClick({ linkId: l.id, linkLabel: l.label, linkUrl: l.url })}
                     className="inline-flex items-center gap-1 text-xs font-semibold text-gold hover:underline shrink-0"
                   >
                     Visualizar página <ArrowUpRight className="h-3.5 w-3.5" />
