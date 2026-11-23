@@ -1594,7 +1594,7 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
           const { data: legacyByEmail } = await supabase
             .from("profiles")
             .select("*")
-            .eq("email", cleanEmail)
+            .ilike("email", cleanEmail)
             .maybeSingle();
 
           if (legacyByEmail) {
@@ -1602,7 +1602,7 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
               await supabase
                 .from("profiles")
                 .update({ id: session.user.id, updated_at: new Date().toISOString() })
-                .eq("email", cleanEmail);
+                .eq("id", legacyByEmail.id);
             } catch (err) {
               console.warn("[CheckSession] Falha ao sincronizar ID do perfil:", err);
             }
@@ -2486,7 +2486,7 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
             const { data: legacyProfile } = await supabase
               .from("profiles")
               .select("*")
-              .eq("email", cleanEmail)
+              .ilike("email", cleanEmail)
               .maybeSingle();
 
             if (legacyProfile) {
@@ -2517,14 +2517,22 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
                     id: signUpData.user.id,
                     updated_at: new Date().toISOString(),
                   })
-                  .eq("email", cleanEmail);
+                  .eq("id", legacyProfile.id);
 
                 // 4. Se o cadastro retornou sessão imediata, ativa-a; se não, tenta signIn
                 if (!signUpData.session) {
-                  await supabase.auth.signInWithPassword({
+                  const { error: signInErr } = await supabase.auth.signInWithPassword({
                     email: cleanEmail,
                     password: password.trim(),
                   });
+                  if (signInErr) {
+                    if (signInErr.message?.toLowerCase().includes("email not confirmed")) {
+                      toast.error("Por favor, desative a opção 'Confirm email' no painel do Supabase para liberar o acesso imediato.");
+                      setAuthLoading(false);
+                      return false;
+                    }
+                    console.warn("[Login JIT] Erro ao autenticar após signUp:", signInErr);
+                  }
                 }
 
                 legacyAutoProvisioned = true;
@@ -2916,7 +2924,7 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
             const { data: existingProf } = await supabase
               .from("profiles")
               .select("id")
-              .eq("email", cleanEmail)
+              .ilike("email", cleanEmail)
               .maybeSingle();
 
             if (existingProf) {
@@ -2928,7 +2936,7 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
                   first_name: first,
                   updated_at: new Date().toISOString(),
                 })
-                .eq("email", cleanEmail);
+                .eq("id", existingProf.id);
             } else {
               await supabase.from("profiles").upsert({
                 id: data.user.id,
