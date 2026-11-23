@@ -1581,12 +1581,34 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.user) {
         setIsAuthenticated(true);
-        // Fetch real profile
-        const { data: dbProfile } = await supabase
+        // Fetch real profile (com fallback de reconciliação de ID pós-migração)
+        let { data: dbProfile } = await supabase
           .from("profiles")
           .select("*")
           .eq("id", session.user.id)
-          .single();
+          .maybeSingle();
+
+        // Se não achou por ID mas o usuário tem e-mail, busca pelo e-mail legado e reconcilia o ID
+        if (!dbProfile && session.user.email) {
+          const cleanEmail = session.user.email.toLowerCase().trim();
+          const { data: legacyByEmail } = await supabase
+            .from("profiles")
+            .select("*")
+            .eq("email", cleanEmail)
+            .maybeSingle();
+
+          if (legacyByEmail) {
+            try {
+              await supabase
+                .from("profiles")
+                .update({ id: session.user.id, updated_at: new Date().toISOString() })
+                .eq("email", cleanEmail);
+            } catch (err) {
+              console.warn("[CheckSession] Falha ao sincronizar ID do perfil:", err);
+            }
+            dbProfile = { ...legacyByEmail, id: session.user.id };
+          }
+        }
 
         if (dbProfile) {
           // Bloqueio de governança para afiliados suspensos (não afeta titular nem admin)
@@ -2453,8 +2475,85 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
         });
 
         if (error) {
+          const cleanEmail = email.trim().toLowerCase();
+
+          // ── JUST-IN-TIME (JIT) AUTO-PROVISIONING PARA AFILIADOS LEGADOS ───────────
+          // Se o Supabase Auth não reconhece as credenciais (novo projeto em branco),
+          // checa se o e-mail já existe na base oficial de profiles
+          let legacyAutoProvisioned = false;
+
+          try {
+            const { data: legacyProfile } = await supabase
+              .from("profiles")
+              .select("*")
+              .eq("email", cleanEmail)
+              .maybeSingle();
+
+            if (legacyProfile) {
+              // 1. Checagem de segurança: afiliado suspenso não pode auto-provisionar
+              if (legacyProfile.status === "suspended" && !isSuperAdmin(cleanEmail) && legacyProfile.role !== "admin") {
+                toast.error("Sua conta de afiliado está temporariamente suspensa pelo administrador.");
+                setAuthLoading(false);
+                return false;
+              }
+
+              // 2. Dispara criação da credencial oficial no Supabase Auth com a senha digitada
+              const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+                email: cleanEmail,
+                password: password.trim(),
+                options: {
+                  data: {
+                    name: legacyProfile.name || legacyProfile.first_name || cleanEmail.split("@")[0],
+                    role: legacyProfile.role || "affiliate",
+                  },
+                },
+              });
+
+              if (!signUpError && signUpData.user) {
+                // 3. Reconciliação imediata: sincroniza o ID de profiles com o novo auth.uid
+                await supabase
+                  .from("profiles")
+                  .update({
+                    id: signUpData.user.id,
+                    updated_at: new Date().toISOString(),
+                  })
+                  .eq("email", cleanEmail);
+
+                // 4. Se o cadastro retornou sessão imediata, ativa-a; se não, tenta signIn
+                if (!signUpData.session) {
+                  await supabase.auth.signInWithPassword({
+                    email: cleanEmail,
+                    password: password.trim(),
+                  });
+                }
+
+                legacyAutoProvisioned = true;
+              } else if (signUpError && signUpError.message?.toLowerCase().includes("already registered")) {
+                // O usuário já existe no Auth mas a senha digitada está errada
+                toast.error("Senha incorreta. Verifique sua senha ou clique em 'Esqueci minha senha'.");
+                setAuthLoading(false);
+                return false;
+              }
+            }
+          } catch (jitErr) {
+            console.warn("[Login JIT] Erro durante auto-provisionamento:", jitErr);
+          }
+
+          if (legacyAutoProvisioned) {
+            setIsAuthenticated(true);
+            localStorage.setItem(STORAGE_KEYS.AUTH, "true");
+            await checkSupabaseSession();
+            syncCreativesWithSupabase(true).catch(() => {});
+            syncMaterialsWithSupabase(true).catch(() => {});
+            syncLinksWithSupabase(true).catch(() => {});
+            syncPlatformSettingsWithSupabase(true).catch(() => {});
+            toast.success("Conta sincronizada! Boas-vindas à plataforma.");
+            setAuthLoading(false);
+            return true;
+          }
+
           // Se o titular errar a senha ou o Supabase falhar, ativa fallback de autoridade executiva
-          if (!isSuperAdmin(email.trim())) {
+          if (!isSuperAdmin(cleanEmail)) {
             toast.error(`Falha no login: ${error.message}`);
             setAuthLoading(false);
             return false;
@@ -2542,9 +2641,58 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
         });
 
         if (error) {
+          const cleanEmail = email.trim().toLowerCase();
+          let adminAutoProvisioned = false;
+
+          // Se for titular ou admin e falhou por não existir no auth.users do novo banco
+          if (isSuperAdmin(cleanEmail)) {
+            try {
+              const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+                email: cleanEmail,
+                password: password.trim(),
+                options: {
+                  data: {
+                    name: "Titular",
+                    role: "admin",
+                  },
+                },
+              });
+
+              if (!signUpError && signUpData.user) {
+                await supabase
+                  .from("profiles")
+                  .update({
+                    id: signUpData.user.id,
+                    role: "admin",
+                    updated_at: new Date().toISOString(),
+                  })
+                  .eq("email", cleanEmail);
+
+                if (!signUpData.session) {
+                  await supabase.auth.signInWithPassword({
+                    email: cleanEmail,
+                    password: password.trim(),
+                  });
+                }
+                adminAutoProvisioned = true;
+              }
+            } catch (jitAdminErr) {
+              console.warn("[AdminLogin JIT] Erro ao auto-provisionar admin:", jitAdminErr);
+            }
+          }
+
+          if (adminAutoProvisioned) {
+            setIsAuthenticated(true);
+            localStorage.setItem(STORAGE_KEYS.AUTH, "true");
+            await checkSupabaseSession();
+            toast.success("Conta administrativa provisionada no Supabase!");
+            setAuthLoading(false);
+            return true;
+          }
+
           // Se o titular ainda não existe no Supabase Auth (banco recém-conectado),
           // permite fallback offline seguro. Para qualquer outro usuário, bloqueia.
-          if (!isSuperAdmin(email.trim())) {
+          if (!isSuperAdmin(cleanEmail)) {
             toast.error(`Falha no login: ${error.message}`);
             setAuthLoading(false);
             return false;
@@ -2762,18 +2910,37 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
           const first = rawName.split(" ")[0] || rawName;
           const userRole = isSuperAdmin(email) ? "admin" : "affiliate";
 
-          // Auto-provisionamento imediato do perfil no banco
+          // Auto-provisionamento imediato do perfil no banco (com proteção para e-mails legados)
           try {
-            await supabase.from("profiles").upsert({
-              id: data.user.id,
-              email: email.trim(),
-              name: rawName,
-              first_name: first,
-              role: userRole,
-              affiliate_code: selfAffiliateCode,
-              status: "active",
-              level: "Afiliado(a) Ouro",
-            }, { onConflict: "id" });
+            const cleanEmail = email.trim().toLowerCase();
+            const { data: existingProf } = await supabase
+              .from("profiles")
+              .select("id")
+              .eq("email", cleanEmail)
+              .maybeSingle();
+
+            if (existingProf) {
+              await supabase
+                .from("profiles")
+                .update({
+                  id: data.user.id,
+                  name: rawName,
+                  first_name: first,
+                  updated_at: new Date().toISOString(),
+                })
+                .eq("email", cleanEmail);
+            } else {
+              await supabase.from("profiles").upsert({
+                id: data.user.id,
+                email: email.trim(),
+                name: rawName,
+                first_name: first,
+                role: userRole,
+                affiliate_code: selfAffiliateCode,
+                status: "active",
+                level: "Afiliado(a) Ouro",
+              }, { onConflict: "id" });
+            }
           } catch (err) {
             console.warn("Aviso ao auto-provisionar perfil:", err);
           }
