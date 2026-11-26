@@ -1867,6 +1867,16 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
     const canWriteGlobalContent = Boolean(isAdmin || isTitular);
 
     try {
+      // Lê as pastas locais ANTES para nunca perder capas ou alterações feitas pelo usuário
+      const currentLocalFolders: CreativeFolder[] = (() => {
+        try {
+          const raw = localStorage.getItem(STORAGE_KEYS.CREATIVE_FOLDERS);
+          return raw ? JSON.parse(raw) : [];
+        } catch {
+          return [];
+        }
+      })();
+
       // 1. Sincronização de Pastas / Grupos Kiwify
       const { data: dbFolders, error: foldersErr } = await supabase
         .from("creative_folders")
@@ -1875,19 +1885,9 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
 
       let formattedFolders: CreativeFolder[] = [];
 
-      if (!foldersErr && dbFolders) {
+      if (!foldersErr && dbFolders && dbFolders.length > 0) {
         const dbFolderMap = new Map(dbFolders.map((f: any) => [f.id, f]));
-        // Identifica pastas locais que ainda não estão no banco para migrar (Zero Loss)
-        const currentLocalFolders = (() => {
-          try {
-            const raw = localStorage.getItem(STORAGE_KEYS.CREATIVE_FOLDERS);
-            return raw ? JSON.parse(raw) : [];
-          } catch {
-            return [];
-          }
-        })();
-
-        const dbFolderNames = new Set(dbFolders.map((f: any) => f.name.toLowerCase().trim()));
+        const dbFolderNames = new Set(dbFolders.map((f: any) => (f.name ? f.name.toLowerCase().trim() : "")));
         const localFoldersToSync = Array.isArray(currentLocalFolders)
           ? currentLocalFolders.filter((f: any) => !dbFolderMap.has(f.id) && !dbFolderNames.has(f.name.toLowerCase().trim()))
           : [];
@@ -1903,25 +1903,39 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
           await supabase.from("creative_folders").upsert(rowsToInsert);
         }
 
-        // Deduplica pastas por id e por nome em minúsculas (mantém apenas uma por nome)
+        // Deduplica pastas preservando rigorosamente as fotos de capa locais
         const seenFolderNames = new Set<string>();
         for (const f of dbFolders) {
-          const normName = f.name.toLowerCase().trim();
-          if (seenFolderNames.has(normName)) continue;
-          seenFolderNames.add(normName);
+          const normName = f.name ? f.name.toLowerCase().trim() : "";
+          if (normName && seenFolderNames.has(normName)) continue;
+          if (normName) seenFolderNames.add(normName);
+
+          const localMatch = currentLocalFolders.find((lf) => lf.id === f.id);
+          const finalCover = f.cover_image || localMatch?.coverImage || undefined;
+
+          // Se a nuvem não tem capa mas o local tem, sincroniza para a nuvem
+          if (!f.cover_image && localMatch?.coverImage && canWriteGlobalContent) {
+            supabase
+              .from("creative_folders")
+              .update({ cover_image: localMatch.coverImage })
+              .eq("id", f.id)
+              .then(() => {});
+          }
+
           formattedFolders.push({
             id: f.id,
-            name: f.name,
-            description: f.description || "",
-            color: f.color || "gold",
-            coverImage: f.cover_image || undefined,
+            name: f.name || localMatch?.name || "Coleção",
+            description: f.description ?? localMatch?.description ?? "",
+            color: f.color || localMatch?.color || "gold",
+            coverImage: finalCover,
+            driveUrl: f.drive_url || localMatch?.driveUrl || undefined,
           });
         }
 
         localFoldersToSync.forEach((lf: any) => {
-          const normName = lf.name.toLowerCase().trim();
-          if (!seenFolderNames.has(normName) && !formattedFolders.some((f) => f.id === lf.id)) {
-            seenFolderNames.add(normName);
+          const normName = lf.name ? lf.name.toLowerCase().trim() : "";
+          if ((!normName || !seenFolderNames.has(normName)) && !formattedFolders.some((f) => f.id === lf.id)) {
+            if (normName) seenFolderNames.add(normName);
             formattedFolders.push(lf);
           }
         });
@@ -1930,6 +1944,10 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
         try {
           localStorage.setItem(STORAGE_KEYS.CREATIVE_FOLDERS, JSON.stringify(formattedFolders));
         } catch {}
+      } else if (currentLocalFolders.length > 0) {
+        // Se a nuvem estiver vazia ou com erro, PRESERVA AS PASTAS E CAPAS LOCAIS INTACTAS!
+        formattedFolders = currentLocalFolders;
+        setCreativeFoldersList(currentLocalFolders);
       }
 
       // 2. Sincronização de Criativos (Zero-Data-Loss & Cross-Device Merge)
@@ -2000,26 +2018,20 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
           localStorage.setItem(STORAGE_KEYS.CREATIVES, JSON.stringify(mergedList));
         } catch {}
 
-        // Auto-cura e Sincronização Resiliente (Garante estrutura de coleções mesmo se a tabela no banco estiver em transição)
-        if (formattedFolders.length === 0) {
+        // Se nenhuma pasta foi carregada e o usuário nunca criou pastas locais,
+        // inicializa pastas neutras para agrupar os criativos existentes sem inventar nomes
+        if (formattedFolders.length === 0 && currentLocalFolders.length === 0) {
           const uniqueFolderIds = Array.from(new Set(mergedList.map((c) => c.folderId).filter(Boolean))) as string[];
           if (uniqueFolderIds.length > 0) {
-            const FOLDER_NAMES_MAP: Record<string, string> = {
-              "cfolder-1795306381722": "Coleção Principal de Vídeos",
-              "cfolder-1795306537982": "Criativos Validados Reels & TikTok",
-              "cfolder-1795306613944": "Criativos de Oferta e Depoimentos",
-              "cfolder-1795309074282": "Pastas de Criativos em Massa",
-              "cfolder-1795312968408": "Criativos de Alta Conversão",
-            };
-            const syntheticFolders: CreativeFolder[] = uniqueFolderIds.map((fid, idx) => ({
+            const neutralFolders: CreativeFolder[] = uniqueFolderIds.map((fid, idx) => ({
               id: fid,
-              name: FOLDER_NAMES_MAP[fid] || `Coleção de Criativos ${idx + 1}`,
-              description: "Criativos oficiais prontos para anúncio e tráfego direto.",
+              name: `Coleção ${idx + 1}`,
+              description: "",
               color: "gold",
             }));
-            setCreativeFoldersList(syntheticFolders);
+            setCreativeFoldersList(neutralFolders);
             try {
-              localStorage.setItem(STORAGE_KEYS.CREATIVE_FOLDERS, JSON.stringify(syntheticFolders));
+              localStorage.setItem(STORAGE_KEYS.CREATIVE_FOLDERS, JSON.stringify(neutralFolders));
             } catch {}
           }
         }
@@ -2127,6 +2139,16 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
     const canWriteGlobalContent = Boolean(isAdmin || isTitular);
 
     try {
+      // Lê as pastas locais ANTES para nunca perder pastas ou links definidos pelo usuário
+      const currentLocalFolders = (() => {
+        try {
+          const raw = localStorage.getItem(STORAGE_KEYS.FOLDERS);
+          return raw ? JSON.parse(raw) : [];
+        } catch {
+          return [];
+        }
+      })();
+
       // 1. Sincronização de Pastas Temáticas de Materiais
       const { data: dbFolders, error: foldersErr } = await supabase
         .from("material_folders")
@@ -2135,17 +2157,8 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
 
       let formattedFolders: MaterialFolder[] = [];
 
-      if (!foldersErr && dbFolders) {
+      if (!foldersErr && dbFolders && dbFolders.length > 0) {
         const dbFolderMap = new Map(dbFolders.map((f: any) => [f.id, f]));
-        const currentLocalFolders = (() => {
-          try {
-            const raw = localStorage.getItem(STORAGE_KEYS.FOLDERS);
-            return raw ? JSON.parse(raw) : [];
-          } catch {
-            return [];
-          }
-        })();
-
         const localFoldersToSync = Array.isArray(currentLocalFolders)
           ? currentLocalFolders.filter((f: any) => !dbFolderMap.has(f.id))
           : [];
@@ -2164,15 +2177,18 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
           console.log(`[SYNC] ✅ ${localFoldersToSync.length} pasta(s) de materiais migrada(s) para o Supabase.`);
         }
 
-        formattedFolders = dbFolders.map((f: any) => ({
-          id: f.id,
-          name: f.name,
-          description: f.description || "",
-          color: f.color || "gold",
-          driveUrl: f.drive_url || undefined,
-          parentId: f.parent_id || null,
-          createdAt: f.created_at,
-        }));
+        formattedFolders = dbFolders.map((f: any) => {
+          const localMatch = currentLocalFolders.find((lf: any) => lf.id === f.id);
+          return {
+            id: f.id,
+            name: f.name || localMatch?.name || "Pasta",
+            description: f.description ?? localMatch?.description ?? "",
+            color: f.color || localMatch?.color || "gold",
+            driveUrl: f.drive_url || localMatch?.driveUrl || undefined,
+            parentId: f.parent_id || null,
+            createdAt: f.created_at,
+          };
+        });
 
         localFoldersToSync.forEach((lf: any) => {
           if (!formattedFolders.some((f) => f.id === lf.id)) {
@@ -2184,6 +2200,10 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
         try {
           localStorage.setItem(STORAGE_KEYS.FOLDERS, JSON.stringify(formattedFolders));
         } catch {}
+      } else if (currentLocalFolders.length > 0) {
+        // Se o banco estiver vazio ou offline, PRESERVA AS PASTAS LOCAIS INTACTAS!
+        formattedFolders = currentLocalFolders;
+        setFoldersList(currentLocalFolders);
       }
 
       // 2. Sincronização de Materiais e Arquivos Oficiais (Zero-Data-Loss Merge)
@@ -2236,25 +2256,21 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
           localStorage.setItem(STORAGE_KEYS.MATERIALS, JSON.stringify(mergedMaterials));
         } catch {}
 
-        // Auto-cura e Sincronização Resiliente de Materiais (Garante estrutura de pastas mesmo se o banco estiver em migração)
-        if (formattedFolders.length === 0) {
+        // Se nenhuma pasta foi carregada e o usuário nunca criou pastas locais,
+        // inicializa pastas neutras para agrupar os materiais sem inventar nomes
+        if (formattedFolders.length === 0 && currentLocalFolders.length === 0) {
           const uniqueFolderIds = Array.from(new Set(mergedMaterials.map((m) => m.folder_id).filter(Boolean))) as string[];
           if (uniqueFolderIds.length > 0) {
-            const MATERIAL_FOLDER_NAMES_MAP: Record<string, string> = {
-              "folder-1795308632878": "Palavras Negativas e Copys Oficiais",
-              "folder-1795312228533": "Materiais de Apoio e Documentos",
-              "folder-1795313370711": "Manuais, PDFs e Guias Vellessa",
-            };
-            const syntheticFolders: MaterialFolder[] = uniqueFolderIds.map((fid, idx) => ({
+            const neutralFolders: MaterialFolder[] = uniqueFolderIds.map((fid, idx) => ({
               id: fid,
-              name: MATERIAL_FOLDER_NAMES_MAP[fid] || `Pasta de Materiais ${idx + 1}`,
-              description: "Materiais de apoio e manuais oficiais.",
+              name: `Pasta ${idx + 1}`,
+              description: "",
               color: "gold",
               parentId: null,
             }));
-            setFoldersList(syntheticFolders);
+            setFoldersList(neutralFolders);
             try {
-              localStorage.setItem(STORAGE_KEYS.FOLDERS, JSON.stringify(syntheticFolders));
+              localStorage.setItem(STORAGE_KEYS.FOLDERS, JSON.stringify(neutralFolders));
             } catch {}
           }
         }
@@ -4141,12 +4157,15 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
 
     if (isSupabaseConfigured && supabase) {
       try {
-        const patch: any = {};
-        if (data.name !== undefined) patch.name = data.name.trim();
-        if (data.description !== undefined) patch.description = data.description.trim() || null;
-        if (data.color !== undefined) patch.color = data.color;
-        if (data.coverImage !== undefined) patch.cover_image = data.coverImage.trim() || null;
-        await supabase.from("creative_folders").update(patch).eq("id", id);
+        const currentFolder = creativeFoldersList.find((f) => f.id === id);
+        const upsertRow: any = {
+          id,
+          name: data.name !== undefined ? data.name.trim() : (currentFolder?.name || "Coleção"),
+          description: data.description !== undefined ? data.description.trim() || null : (currentFolder?.description || null),
+          color: data.color !== undefined ? data.color : (currentFolder?.color || "gold"),
+          cover_image: data.coverImage !== undefined ? data.coverImage.trim() || null : (currentFolder?.coverImage || null),
+        };
+        await supabase.from("creative_folders").upsert(upsertRow);
       } catch (err) {
         console.warn("[AffiliateStore] Falha ao atualizar grupo no Supabase:", err);
       }

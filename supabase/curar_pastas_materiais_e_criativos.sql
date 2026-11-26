@@ -58,31 +58,24 @@ CREATE POLICY "Allow all write creative_folders" ON public.creative_folders
   FOR ALL TO authenticated, anon USING (true) WITH CHECK (true);
 
 
--- 3. RECONEXÃO DAS PASTAS DE MATERIAIS (VINCULAÇÃO DIRETA AOS 17 MATERIAIS SALVOS)
+-- 3. RECONEXÃO DAS PASTAS DE MATERIAIS (GARANTE QUE AS 3 PASTAS EXISTAM SEM SOBRESCREVER NOMES DO USUÁRIO)
 INSERT INTO public.material_folders (id, name, description, color, drive_url, parent_id, order_index)
 VALUES
-  ('folder-1795308632878', 'Palavras Negativas e Copys Oficiais', 'Termos restritos, palavras negativas e copys oficiais para validação de tráfego.', 'gold', NULL, NULL, 0),
-  ('folder-1795312228533', 'Materiais de Apoio e Documentos', 'Apresentações de produto, benefícios do sérum e tabelas comparativas.', 'gold', NULL, NULL, 1),
-  ('folder-1795313370711', 'Manuais, PDFs e Guias Vellessa', 'Manuais oficiais, guias passo a passo de afiliação e regras operacionais.', 'gold', NULL, NULL, 2)
-ON CONFLICT (id) DO UPDATE SET
-  name = EXCLUDED.name,
-  description = EXCLUDED.description,
-  color = EXCLUDED.color,
-  order_index = EXCLUDED.order_index;
+  ('folder-1795308632878', 'Pasta 1', '', 'gold', NULL, NULL, 0),
+  ('folder-1795312228533', 'Pasta 2', '', 'gold', NULL, NULL, 1),
+  ('folder-1795313370711', 'Pasta 3', '', 'gold', NULL, NULL, 2)
+ON CONFLICT (id) DO NOTHING;
 
 
--- 4. RECONEXÃO DAS PASTAS DE CRIATIVOS (VINCULAÇÃO DIRETA AOS 94 CRIATIVOS SALVOS)
+-- 4. RECONEXÃO DAS PASTAS DE CRIATIVOS (GARANTE QUE AS 5 COLEÇÕES EXISTAM SEM SOBRESCREVER CAPAS OU NOMES)
 INSERT INTO public.creative_folders (id, name, description, color, cover_image)
 VALUES
-  ('cfolder-1795306381722', 'Coleção Principal de Vídeos', 'Vídeos demonstrativos de alta conversão para topo e meio de funil.', 'gold', NULL),
-  ('cfolder-1795306537982', 'Criativos Validados Reels & TikTok', 'Peças verticais em 9:16 otimizadas para tráfego no Instagram e TikTok Ads.', 'emerald', NULL),
-  ('cfolder-1795306613944', 'Criativos de Oferta e Depoimentos', 'Depoimentos reais de clientes e chamadas diretas para kits promocionais.', 'rose', NULL),
-  ('cfolder-1795309074282', 'Pastas de Criativos em Massa', 'Lotes completos de criativos para testes rápidos de escala.', 'purple', NULL),
-  ('cfolder-1795312968408', 'Criativos de Alta Conversão', 'Variações campeãs de CTR para campanhas de venda direta.', 'amber', NULL)
-ON CONFLICT (id) DO UPDATE SET
-  name = EXCLUDED.name,
-  description = EXCLUDED.description,
-  color = EXCLUDED.color;
+  ('cfolder-1795306381722', 'Coleção 1', '', 'gold', NULL),
+  ('cfolder-1795306537982', 'Coleção 2', '', 'gold', NULL),
+  ('cfolder-1795306613944', 'Coleção 3', '', 'gold', NULL),
+  ('cfolder-1795309074282', 'Coleção 4', '', 'gold', NULL),
+  ('cfolder-1795312968408', 'Coleção 5', '', 'gold', NULL)
+ON CONFLICT (id) DO NOTHING;
 
 
 -- 5. RECARGA DO SCHEMA CACHE DO POSTGREST
