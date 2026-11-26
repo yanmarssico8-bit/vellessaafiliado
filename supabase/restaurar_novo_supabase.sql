@@ -71,6 +71,18 @@ CREATE TABLE IF NOT EXISTS public.folders (
 ALTER TABLE public.folders ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Allow all folders" ON public.folders FOR ALL TO authenticated, anon USING (true) WITH CHECK (true);
 
+CREATE TABLE IF NOT EXISTS public.creative_folders (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  color TEXT DEFAULT 'gold',
+  cover_image TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE public.creative_folders ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Allow all creative_folders" ON public.creative_folders;
+CREATE POLICY "Allow all creative_folders" ON public.creative_folders FOR ALL TO authenticated, anon USING (true) WITH CHECK (true);
+
 CREATE TABLE IF NOT EXISTS public.creatives (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,

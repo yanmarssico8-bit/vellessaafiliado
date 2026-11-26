@@ -1873,6 +1873,8 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
         .select("*")
         .order("created_at", { ascending: true });
 
+      let formattedFolders: CreativeFolder[] = [];
+
       if (!foldersErr && dbFolders) {
         const dbFolderMap = new Map(dbFolders.map((f: any) => [f.id, f]));
         // Identifica pastas locais que ainda não estão no banco para migrar (Zero Loss)
@@ -1903,7 +1905,6 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
 
         // Deduplica pastas por id e por nome em minúsculas (mantém apenas uma por nome)
         const seenFolderNames = new Set<string>();
-        const formattedFolders: CreativeFolder[] = [];
         for (const f of dbFolders) {
           const normName = f.name.toLowerCase().trim();
           if (seenFolderNames.has(normName)) continue;
@@ -1998,6 +1999,30 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
         try {
           localStorage.setItem(STORAGE_KEYS.CREATIVES, JSON.stringify(mergedList));
         } catch {}
+
+        // Auto-cura e Sincronização Resiliente (Garante estrutura de coleções mesmo se a tabela no banco estiver em transição)
+        if (formattedFolders.length === 0) {
+          const uniqueFolderIds = Array.from(new Set(mergedList.map((c) => c.folderId).filter(Boolean))) as string[];
+          if (uniqueFolderIds.length > 0) {
+            const FOLDER_NAMES_MAP: Record<string, string> = {
+              "cfolder-1795306381722": "Coleção Principal de Vídeos",
+              "cfolder-1795306537982": "Criativos Validados Reels & TikTok",
+              "cfolder-1795306613944": "Criativos de Oferta e Depoimentos",
+              "cfolder-1795309074282": "Pastas de Criativos em Massa",
+              "cfolder-1795312968408": "Criativos de Alta Conversão",
+            };
+            const syntheticFolders: CreativeFolder[] = uniqueFolderIds.map((fid, idx) => ({
+              id: fid,
+              name: FOLDER_NAMES_MAP[fid] || `Coleção de Criativos ${idx + 1}`,
+              description: "Criativos oficiais prontos para anúncio e tráfego direto.",
+              color: "gold",
+            }));
+            setCreativeFoldersList(syntheticFolders);
+            try {
+              localStorage.setItem(STORAGE_KEYS.CREATIVE_FOLDERS, JSON.stringify(syntheticFolders));
+            } catch {}
+          }
+        }
 
         // Migração em segundo plano: envia para o Supabase Storage qualquer arquivo que esteja apenas local (apenas se for admin/titular)
         const itemsToMigrate = canWriteGlobalContent
@@ -2108,6 +2133,8 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
         .select("*")
         .order("order_index", { ascending: true });
 
+      let formattedFolders: MaterialFolder[] = [];
+
       if (!foldersErr && dbFolders) {
         const dbFolderMap = new Map(dbFolders.map((f: any) => [f.id, f]));
         const currentLocalFolders = (() => {
@@ -2137,7 +2164,7 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
           console.log(`[SYNC] ✅ ${localFoldersToSync.length} pasta(s) de materiais migrada(s) para o Supabase.`);
         }
 
-        const formattedFolders: MaterialFolder[] = dbFolders.map((f: any) => ({
+        formattedFolders = dbFolders.map((f: any) => ({
           id: f.id,
           name: f.name,
           description: f.description || "",
@@ -2208,6 +2235,29 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
         try {
           localStorage.setItem(STORAGE_KEYS.MATERIALS, JSON.stringify(mergedMaterials));
         } catch {}
+
+        // Auto-cura e Sincronização Resiliente de Materiais (Garante estrutura de pastas mesmo se o banco estiver em migração)
+        if (formattedFolders.length === 0) {
+          const uniqueFolderIds = Array.from(new Set(mergedMaterials.map((m) => m.folder_id).filter(Boolean))) as string[];
+          if (uniqueFolderIds.length > 0) {
+            const MATERIAL_FOLDER_NAMES_MAP: Record<string, string> = {
+              "folder-1795308632878": "Palavras Negativas e Copys Oficiais",
+              "folder-1795312228533": "Materiais de Apoio e Documentos",
+              "folder-1795313370711": "Manuais, PDFs e Guias Vellessa",
+            };
+            const syntheticFolders: MaterialFolder[] = uniqueFolderIds.map((fid, idx) => ({
+              id: fid,
+              name: MATERIAL_FOLDER_NAMES_MAP[fid] || `Pasta de Materiais ${idx + 1}`,
+              description: "Materiais de apoio e manuais oficiais.",
+              color: "gold",
+              parentId: null,
+            }));
+            setFoldersList(syntheticFolders);
+            try {
+              localStorage.setItem(STORAGE_KEYS.FOLDERS, JSON.stringify(syntheticFolders));
+            } catch {}
+          }
+        }
 
         // Migração de materiais locais pendentes (restrito a admin/titular)
         const pendingMaterials = canWriteGlobalContent

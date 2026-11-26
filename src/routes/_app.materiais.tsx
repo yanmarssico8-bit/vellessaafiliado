@@ -343,7 +343,7 @@ function Materiais() {
   // Pastas raiz (sem parentId) para exibir na raiz
   const rootFolders = foldersList.filter((f) => !f.parentId);
 
-  // Arquivos exibidos de acordo com a pasta selecionada ou busca ativa
+  // Arquivos exibidos de acordo com a pasta selecionada ou busca ativa (Zero-Void Fallback)
   const displayedMaterials = materialsList.filter((m) => {
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase().trim();
@@ -356,7 +356,12 @@ function Materiais() {
     if (currentFolderId) {
       return m.folderId === currentFolderId;
     }
-    return !m.folderId; // Na raiz, somente arquivos avulsos
+    // Na raiz: se não houver pastas cadastradas, exibe TODOS os materiais disponíveis
+    if (rootFolders.length === 0) {
+      return true;
+    }
+    // Na raiz com pastas existentes: exibe arquivos sem pasta OU arquivos cujo folderId não existe nas pastas atuais (evita órfãos invisíveis)
+    return !m.folderId || !foldersList.some((f) => f.id === m.folderId);
   });
 
   // Baixar todos os materiais da pasta de uma vez
@@ -1081,24 +1086,38 @@ function Materiais() {
               </div>
             )}
 
-            {/* 2. SEÇÃO DE ARQUIVOS GERAIS (FORA DE PASTAS) */}
+            {/* 2. SEÇÃO DE ARQUIVOS GERAIS OU TODOS OS MATERIAIS (FALLBACK ZERO-VOID) */}
             <div className="space-y-3">
               <div className="flex items-center justify-between px-1">
                 <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
                   <FileText className="h-3.5 w-3.5 text-gold" />
-                  <span>Arquivos Gerais ({displayedMaterials.length})</span>
-                </span>
-                {foldersList.length > 0 && (
-                  <span className="text-[11px] text-muted-foreground">
-                    Materiais de apoio e manuais rápidos
+                  <span>
+                    {rootFolders.length === 0
+                      ? `Todos os Materiais Disponíveis (${displayedMaterials.length})`
+                      : `Arquivos Gerais (${displayedMaterials.length})`}
                   </span>
+                </span>
+                {rootFolders.length === 0 && displayedMaterials.length > 0 ? (
+                  <span className="text-[11px] font-semibold text-gold bg-gold/10 border border-gold/30 px-2 py-0.5 rounded-full">
+                    Acesso Direto Ativo
+                  </span>
+                ) : (
+                  foldersList.length > 0 && (
+                    <span className="text-[11px] text-muted-foreground">
+                      Materiais de apoio e manuais rápidos
+                    </span>
+                  )
                 )}
               </div>
 
               {displayedMaterials.length === 0 ? (
                 <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed py-10 text-center bg-card/20">
                   <FileText className="h-8 w-8 text-muted-foreground/30 mb-2" />
-                  <p className="text-xs text-muted-foreground">Nenhum arquivo avulso no momento.</p>
+                  <p className="text-xs text-muted-foreground">
+                    {rootFolders.length === 0
+                      ? "Nenhum material cadastrado no momento."
+                      : "Nenhum arquivo avulso no momento."}
+                  </p>
                 </div>
               ) : viewMode === "grid" ? (
                 <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
