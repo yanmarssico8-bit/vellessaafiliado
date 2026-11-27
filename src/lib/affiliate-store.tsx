@@ -2392,7 +2392,7 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
     }
   }, [isAdmin, isTitular]);
 
-  // ── Sincronização de Configurações Globais (Outdoor do Painel) ──
+  // ── Sincronização de Configurações Globais (Outdoor do Painel, Pastas e Capas em Nuvem) ──
   const syncPlatformSettingsWithSupabase = useCallback(async (force = false) => {
     if (!isSupabaseConfigured || !supabase) return;
     const now = Date.now();
@@ -2410,6 +2410,7 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
         .select("*");
 
       if (!error && rows) {
+        // 1. Outdoor (Billboard)
         const billboardRow = rows.find((r: any) => r.key === "billboard_settings");
         if (billboardRow && billboardRow.value) {
           const normalized = normalizeBillboardSettings(billboardRow.value);
@@ -2433,6 +2434,102 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
               updated_at: new Date().toISOString(),
             });
           }
+        }
+
+        // 2. Pastas de Criativos e Fotos de Capa (Sincronização em Nuvem Cross-Device)
+        const creativeFoldersRow = rows.find((r: any) => r.key === "creative_folders_v1");
+        const currentLocalCreativeFolders: CreativeFolder[] = (() => {
+          try {
+            const raw = localStorage.getItem(STORAGE_KEYS.CREATIVE_FOLDERS);
+            return raw ? JSON.parse(raw) : [];
+          } catch {
+            return [];
+          }
+        })();
+
+        if (creativeFoldersRow && Array.isArray(creativeFoldersRow.value) && creativeFoldersRow.value.length > 0) {
+          // A nuvem tem as coleções! Mescla preservando qualquer foto de capa local se a nuvem estiver sem ela
+          const remoteList: CreativeFolder[] = creativeFoldersRow.value;
+          const mergedCreativeFolders: CreativeFolder[] = remoteList.map((rf) => {
+            const localMatch = currentLocalCreativeFolders.find((lf) => lf.id === rf.id);
+            return {
+              ...rf,
+              coverImage: rf.coverImage || localMatch?.coverImage || undefined,
+            };
+          });
+
+          // Se este aparelho tiver pastas novas criadas localmente, inclui
+          currentLocalCreativeFolders.forEach((lf) => {
+            if (!mergedCreativeFolders.some((f) => f.id === lf.id)) {
+              mergedCreativeFolders.push(lf);
+            }
+          });
+
+          setCreativeFoldersList(mergedCreativeFolders);
+          try {
+            localStorage.setItem(STORAGE_KEYS.CREATIVE_FOLDERS, JSON.stringify(mergedCreativeFolders));
+          } catch {}
+
+          // Se este aparelho tiver fotos de capa que a nuvem ainda não tem, sobe para a nuvem
+          const hasCoversToPush = currentLocalCreativeFolders.some(
+            (lf) => lf.coverImage && !remoteList.some((rf) => rf.id === lf.id && rf.coverImage)
+          );
+          if (canWriteGlobalContent && hasCoversToPush) {
+            await supabase.from("platform_settings").upsert({
+              key: "creative_folders_v1",
+              value: mergedCreativeFolders,
+              updated_at: new Date().toISOString(),
+            });
+          }
+        } else if (canWriteGlobalContent && currentLocalCreativeFolders.length > 0) {
+          // A nuvem ainda não tem creative_folders_v1, mas este PC tem as 4 coleções com capas!
+          // Sobe IMEDIATAMENTE as 4 coleções e capas para o Supabase!
+          await supabase.from("platform_settings").upsert({
+            key: "creative_folders_v1",
+            value: currentLocalCreativeFolders,
+            updated_at: new Date().toISOString(),
+          });
+          console.log(`[SYNC] ✅ ${currentLocalCreativeFolders.length} coleções de criativos enviadas para platform_settings no Supabase.`);
+        }
+
+        // 3. Pastas de Materiais (Sincronização em Nuvem Cross-Device)
+        const materialFoldersRow = rows.find((r: any) => r.key === "material_folders_v1");
+        const currentLocalMaterialFolders: MaterialFolder[] = (() => {
+          try {
+            const raw = localStorage.getItem(STORAGE_KEYS.FOLDERS);
+            return raw ? JSON.parse(raw) : [];
+          } catch {
+            return [];
+          }
+        })();
+
+        if (materialFoldersRow && Array.isArray(materialFoldersRow.value) && materialFoldersRow.value.length > 0) {
+          const remoteMatList: MaterialFolder[] = materialFoldersRow.value;
+          const mergedMatFolders: MaterialFolder[] = remoteMatList.map((rf) => {
+            const localMatch = currentLocalMaterialFolders.find((lf) => lf.id === rf.id);
+            return {
+              ...rf,
+              driveUrl: rf.driveUrl || localMatch?.driveUrl || undefined,
+            };
+          });
+
+          currentLocalMaterialFolders.forEach((lf) => {
+            if (!mergedMatFolders.some((f) => f.id === lf.id)) {
+              mergedMatFolders.push(lf);
+            }
+          });
+
+          setFoldersList(mergedMatFolders);
+          try {
+            localStorage.setItem(STORAGE_KEYS.FOLDERS, JSON.stringify(mergedMatFolders));
+          } catch {}
+        } else if (canWriteGlobalContent && currentLocalMaterialFolders.length > 0) {
+          await supabase.from("platform_settings").upsert({
+            key: "material_folders_v1",
+            value: currentLocalMaterialFolders,
+            updated_at: new Date().toISOString(),
+          });
+          console.log(`[SYNC] ✅ ${currentLocalMaterialFolders.length} pastas de materiais enviadas para platform_settings no Supabase.`);
         }
       }
     } catch (err) {
@@ -2478,6 +2575,20 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
               localStorage.setItem(STORAGE_KEYS.MODULES, JSON.stringify(row.value));
             } catch {}
           }
+          if (row && row.key === "creative_folders_v1" && Array.isArray(row.value)) {
+            console.log(`[REALTIME] ⚡ Atualização instantânea de coleções de criativos e capas recebida do Supabase (${row.value.length} coleções).`);
+            setCreativeFoldersList(row.value);
+            try {
+              localStorage.setItem(STORAGE_KEYS.CREATIVE_FOLDERS, JSON.stringify(row.value));
+            } catch {}
+          }
+          if (row && row.key === "material_folders_v1" && Array.isArray(row.value)) {
+            console.log(`[REALTIME] ⚡ Atualização instantânea de pastas de materiais recebida do Supabase.`);
+            setFoldersList(row.value);
+            try {
+              localStorage.setItem(STORAGE_KEYS.FOLDERS, JSON.stringify(row.value));
+            } catch {}
+          }
         }
       )
       .subscribe();
@@ -2485,6 +2596,7 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
     const handleVisibilityOrFocus = () => {
       if (typeof document !== "undefined" && document.visibilityState === "visible") {
         syncModulesWithSupabase(true);
+        syncPlatformSettingsWithSupabase(true);
       }
     };
     window.addEventListener("focus", handleVisibilityOrFocus);
@@ -3993,6 +4105,15 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
     } catch (e) {
       console.warn("[AffiliateStore] Erro ao gravar pasta no localStorage:", e);
     }
+
+    if (isSupabaseConfigured && supabase) {
+      supabase.from("platform_settings").upsert({
+        key: "material_folders_v1",
+        value: updated,
+        updated_at: new Date().toISOString(),
+      }).catch(() => {});
+    }
+
     toast.success(`Pasta "${newFolder.name}" criada!`);
   };
 
@@ -4038,6 +4159,15 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
     } catch (e) {
       console.warn("[AffiliateStore] Erro ao gravar pasta no localStorage:", e);
     }
+
+    if (isSupabaseConfigured && supabase) {
+      supabase.from("platform_settings").upsert({
+        key: "material_folders_v1",
+        value: updated,
+        updated_at: new Date().toISOString(),
+      }).catch(() => {});
+    }
+
     toast.success("Pasta atualizada!");
   };
 
@@ -4073,6 +4203,15 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
     const updated = foldersList.filter((f) => f.id !== id);
     setFoldersList(updated);
     localStorage.setItem(STORAGE_KEYS.FOLDERS, JSON.stringify(updated));
+
+    if (isSupabaseConfigured && supabase) {
+      supabase.from("platform_settings").upsert({
+        key: "material_folders_v1",
+        value: updated,
+        updated_at: new Date().toISOString(),
+      }).catch(() => {});
+    }
+
     toast.success("Pasta removida. Os materiais foram movidos para Geral.");
   };
 
@@ -4115,6 +4254,13 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
     });
 
     if (isSupabaseConfigured && supabase) {
+      // 1. Grava no platform_settings (Garante sincronização imediata em todos os aparelhos)
+      supabase.from("platform_settings").upsert({
+        key: "creative_folders_v1",
+        value: updatedFolders,
+        updated_at: new Date().toISOString(),
+      }).catch(() => {});
+
       try {
         const { error } = await supabase.from("creative_folders").upsert({
           id: newFolder.id,
@@ -4136,6 +4282,7 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
   };
 
   const updateCreativeFolder = async (id: string, data: { name?: string; description?: string; color?: string; icon?: string; coverImage?: string; driveUrl?: string }) => {
+    let nextFolders: CreativeFolder[] = [];
     setCreativeFoldersList((prev) => {
       const updated = prev.map((f) => {
         if (f.id !== id) return f;
@@ -4149,6 +4296,7 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
           driveUrl: data.driveUrl !== undefined ? data.driveUrl?.trim() : f.driveUrl,
         };
       });
+      nextFolders = updated;
       try {
         localStorage.setItem(STORAGE_KEYS.CREATIVE_FOLDERS, JSON.stringify(updated));
       } catch {}
@@ -4156,8 +4304,15 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
     });
 
     if (isSupabaseConfigured && supabase) {
+      // 1. Grava no platform_settings (Garante que capas e nomes cheguem imediatamente ao celular e outros aparelhos)
+      supabase.from("platform_settings").upsert({
+        key: "creative_folders_v1",
+        value: nextFolders,
+        updated_at: new Date().toISOString(),
+      }).catch(() => {});
+
       try {
-        const currentFolder = creativeFoldersList.find((f) => f.id === id);
+        const currentFolder = nextFolders.find((f) => f.id === id);
         const upsertRow: any = {
           id,
           name: data.name !== undefined ? data.name.trim() : (currentFolder?.name || "Coleção"),
@@ -4171,7 +4326,7 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
       }
     }
 
-    toast.success("Grupo atualizado!");
+    toast.success("Grupo atualizado com sucesso!");
   };
 
   const deleteCreativeFolder = async (id: string) => {
@@ -4187,6 +4342,13 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
     localStorage.setItem(STORAGE_KEYS.CREATIVE_FOLDERS, JSON.stringify(updated));
 
     if (isSupabaseConfigured && supabase) {
+      // 1. Atualiza platform_settings
+      supabase.from("platform_settings").upsert({
+        key: "creative_folders_v1",
+        value: updated,
+        updated_at: new Date().toISOString(),
+      }).catch(() => {});
+
       try {
         await supabase.from("creatives").update({ folder_id: null }).eq("folder_id", id);
         await supabase.from("creative_folders").delete().eq("id", id);
