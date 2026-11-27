@@ -225,6 +225,14 @@ function Criativos() {
     return map;
   }, [creativesList]);
 
+  // Filtro defensivo QA Master: na visão do afiliado, apenas coleções legítimas com criativos reais (> 0) são exibidas.
+  // Pastas fantasmas ou órfãs com 0 peças são 100% proibidas de poluir a grade do afiliado.
+  const visibleCreativeFolders = useMemo(() => {
+    return creativeFoldersList.filter(
+      (f) => f.id !== "cfolder-1795312968408" && (countByFolder[f.id] || 0) > 0
+    );
+  }, [creativeFoldersList, countByFolder]);
+
   // Criativos ativos de acordo com o grupo atual (100% isolados na pasta aberta)
   const activeCreatives = useMemo(() => {
     if (!currentFolderId) return [];
@@ -357,11 +365,11 @@ function Criativos() {
               <span>Coleções de Criativos</span>
             </h2>
             <span className="text-[11px] font-mono text-muted-foreground">
-              {creativeFoldersList.length} {creativeFoldersList.length === 1 ? "coleção" : "coleções"}
+              {visibleCreativeFolders.length} {visibleCreativeFolders.length === 1 ? "coleção" : "coleções"}
             </span>
           </div>
 
-          {creativeFoldersList.length === 0 ? (
+          {visibleCreativeFolders.length === 0 ? (
             creativesList.length > 0 ? (
               /* Fallback de Resiliência: Grade de Todos os Criativos (Zero-Void UI) */
               <div className="space-y-4">
@@ -476,7 +484,7 @@ function Criativos() {
             )
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-5 gap-5">
-              {creativeFoldersList.map((folder) => {
+              {visibleCreativeFolders.map((folder) => {
                 const count = countByFolder[folder.id] || 0;
                 const colorKey = folder.color || "gold";
                 const gradient = COLOR_GRADIENT[colorKey] || COLOR_GRADIENT.gold;
@@ -504,6 +512,9 @@ function Criativos() {
                           alt={folder.name}
                           loading="lazy"
                           decoding="async"
+                          onError={(e) => {
+                            (e.currentTarget as HTMLImageElement).style.display = "none";
+                          }}
                           className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
                         />
                       ) : (

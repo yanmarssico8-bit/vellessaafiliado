@@ -323,6 +323,11 @@ function AdminCriativosPage() {
     return map;
   }, [creativesList]);
 
+  // Lista higienizada de pastas: purga qualquer pasta fantasma da blacklist
+  const sanitizedCreativeFolders = useMemo(() => {
+    return creativeFoldersList.filter((f) => f && f.id !== "cfolder-1795312968408");
+  }, [creativeFoldersList]);
+
   // Auxiliar para miniatura com auto-fallback para thumbnail de alta resolução do Google Drive
   const getCreativeThumbnail = (c: Creative): string | null => {
     if (c.image) return c.image;
@@ -940,7 +945,7 @@ function AdminCriativosPage() {
               Vellessa CMS
             </span>
             <span className="text-xs text-muted-foreground font-mono">
-              {creativesList.length} peças cadastradas · {creativeFoldersList.length} grupos
+              {creativesList.length} peças cadastradas · {sanitizedCreativeFolders.length} grupos
             </span>
           </div>
           <h1 className="mt-1 text-2xl sm:text-3xl font-semibold tracking-tight text-foreground">
@@ -1121,7 +1126,7 @@ function AdminCriativosPage() {
               <Sparkles className="h-4 w-4 text-gold" />
               <span>Coleções de Criativos (Estilo Kiwify)</span>
               <span className="text-xs text-muted-foreground font-normal">
-                ({creativeFoldersList.length})
+                ({sanitizedCreativeFolders.length})
               </span>
             </h2>
             <button
@@ -1132,7 +1137,7 @@ function AdminCriativosPage() {
             </button>
           </div>
 
-          {creativeFoldersList.length === 0 ? (
+          {sanitizedCreativeFolders.length === 0 ? (
             <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-border/60 py-16 text-center bg-card/30 p-6">
               <Folder className="mx-auto h-12 w-12 text-gold/40 mb-3" />
               <h3 className="text-base font-semibold text-foreground">
@@ -1150,7 +1155,7 @@ function AdminCriativosPage() {
             </div>
           ) : (
             <div className="grid gap-5 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-5">
-              {creativeFoldersList.map((folder) => {
+              {sanitizedCreativeFolders.map((folder) => {
                 const count = countByFolder[folder.id] || 0;
                 const gradientTheme = COLOR_GRADIENT[folder.color || "gold"] || COLOR_GRADIENT.gold;
                 const dotColor = COLOR_DOT[folder.color || "gold"] || COLOR_DOT.gold;
@@ -1180,6 +1185,9 @@ function AdminCriativosPage() {
                           alt={folder.name}
                           loading="lazy"
                           decoding="async"
+                          onError={(e) => {
+                            (e.currentTarget as HTMLImageElement).style.display = "none";
+                          }}
                           className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
                         />
                       ) : (
@@ -1654,7 +1662,7 @@ function AdminCriativosPage() {
                       <span>Raiz Geral (Sem grupo)</span>
                     </button>
 
-                    {creativeFoldersList.map((f) => (
+                    {sanitizedCreativeFolders.map((f) => (
                       <button
                         key={f.id}
                         type="button"
@@ -1861,10 +1869,10 @@ function AdminCriativosPage() {
                   onChange={(e) => setSelectedFolderId(e.target.value)}
                   className="mt-1 h-10 w-full rounded-xl border border-border/80 bg-background px-3 text-sm outline-none focus:border-gold"
                 >
-                  {creativeFoldersList.length === 0 && (
+                  {sanitizedCreativeFolders.length === 0 && (
                     <option value="">Nenhuma coleção cadastrada</option>
                   )}
-                  {creativeFoldersList.map((f) => (
+                  {sanitizedCreativeFolders.map((f) => (
                     <option key={f.id} value={f.id}>
                       ✨ {f.name}
                     </option>
@@ -2184,10 +2192,10 @@ function AdminCriativosPage() {
                   onChange={(e) => setEditSelectedFolderId(e.target.value)}
                   className="mt-1 h-10 w-full rounded-xl border border-border/80 bg-background px-3 text-sm outline-none focus:border-gold"
                 >
-                  {creativeFoldersList.length === 0 && (
+                  {sanitizedCreativeFolders.length === 0 && (
                     <option value="">Nenhuma coleção cadastrada</option>
                   )}
-                  {creativeFoldersList.map((f) => (
+                  {sanitizedCreativeFolders.map((f) => (
                     <option key={f.id} value={f.id}>
                       ✨ {f.name}
                     </option>
@@ -2413,7 +2421,7 @@ function AdminCriativosPage() {
                   required
                 >
                   <option value="">Selecione o grupo onde as peças entrarão...</option>
-                  {creativeFoldersList.map((f) => (
+                  {sanitizedCreativeFolders.map((f) => (
                     <option key={f.id} value={f.id}>
                       📁 {f.name} {f.id === currentFolderId ? "(Coleção Atual)" : ""}
                     </option>
@@ -2484,7 +2492,7 @@ function AdminCriativosPage() {
                     {/* Indicador de destino */}
                     <div className="text-[11px] text-sky-400 font-medium font-mono flex items-center gap-1">
                       <Folder className="h-3 w-3" />
-                      <span>Destino: {creativeFoldersList.find((f) => f.id === driveImportFolderId)?.name || "Selecione acima"}</span>
+                      <span>Destino: {sanitizedCreativeFolders.find((f) => f.id === driveImportFolderId)?.name || "Selecione acima"}</span>
                     </div>
                   </div>
 

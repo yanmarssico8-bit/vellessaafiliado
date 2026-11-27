@@ -1015,7 +1015,9 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
       const saved = localStorage.getItem(STORAGE_KEYS.CREATIVE_FOLDERS);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed)) {
+          return parsed.filter((f) => f && f.id !== "cfolder-1795312968408");
+        }
       }
     } catch (e) {
       console.error(e);
@@ -2441,15 +2443,17 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
         const currentLocalCreativeFolders: CreativeFolder[] = (() => {
           try {
             const raw = localStorage.getItem(STORAGE_KEYS.CREATIVE_FOLDERS);
-            return raw ? JSON.parse(raw) : [];
+            return raw ? JSON.parse(raw).filter((f: any) => f && f.id !== "cfolder-1795312968408") : [];
           } catch {
             return [];
           }
         })();
 
         if (creativeFoldersRow && Array.isArray(creativeFoldersRow.value) && creativeFoldersRow.value.length > 0) {
-          // A nuvem tem as coleções! Mescla preservando qualquer foto de capa local se a nuvem estiver sem ela
-          const remoteList: CreativeFolder[] = creativeFoldersRow.value;
+          // A nuvem tem as coleções! Filtra qualquer ID fantasma da blacklist
+          const remoteList: CreativeFolder[] = creativeFoldersRow.value.filter(
+            (rf: any) => rf && rf.id !== "cfolder-1795312968408"
+          );
           const mergedCreativeFolders: CreativeFolder[] = remoteList.map((rf) => {
             const localMatch = currentLocalCreativeFolders.find((lf) => lf.id === rf.id);
             return {
@@ -2458,9 +2462,9 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
             };
           });
 
-          // Se este aparelho tiver pastas novas criadas localmente, inclui
+          // Se este aparelho tiver pastas novas criadas legitimamente (que não sejam fantasmas)
           currentLocalCreativeFolders.forEach((lf) => {
-            if (!mergedCreativeFolders.some((f) => f.id === lf.id)) {
+            if (lf.id !== "cfolder-1795312968408" && !mergedCreativeFolders.some((f) => f.id === lf.id)) {
               mergedCreativeFolders.push(lf);
             }
           });
@@ -2470,26 +2474,26 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
             localStorage.setItem(STORAGE_KEYS.CREATIVE_FOLDERS, JSON.stringify(mergedCreativeFolders));
           } catch {}
 
-          // Se este aparelho tiver fotos de capa que a nuvem ainda não tem, sobe para a nuvem
+          // Se este aparelho tiver fotos de capa locais que a nuvem ainda não tem, sobe para a nuvem
           const hasCoversToPush = currentLocalCreativeFolders.some(
             (lf) => lf.coverImage && !remoteList.some((rf) => rf.id === lf.id && rf.coverImage)
           );
-          if (canWriteGlobalContent && hasCoversToPush) {
+          if (hasCoversToPush) {
             await supabase.from("platform_settings").upsert({
               key: "creative_folders_v1",
               value: mergedCreativeFolders,
               updated_at: new Date().toISOString(),
             });
           }
-        } else if (canWriteGlobalContent && currentLocalCreativeFolders.length > 0) {
-          // A nuvem ainda não tem creative_folders_v1, mas este PC tem as 4 coleções com capas!
-          // Sobe IMEDIATAMENTE as 4 coleções e capas para o Supabase!
+        } else if (currentLocalCreativeFolders.length > 0) {
+          const cleanLocal = currentLocalCreativeFolders.filter((f) => f.id !== "cfolder-1795312968408");
+          // Sobe IMEDIATAMENTE as coleções e capas para o Supabase!
           await supabase.from("platform_settings").upsert({
             key: "creative_folders_v1",
-            value: currentLocalCreativeFolders,
+            value: cleanLocal,
             updated_at: new Date().toISOString(),
           });
-          console.log(`[SYNC] ✅ ${currentLocalCreativeFolders.length} coleções de criativos enviadas para platform_settings no Supabase.`);
+          console.log(`[SYNC] ✅ ${cleanLocal.length} coleções de criativos enviadas para platform_settings no Supabase.`);
         }
 
         // 3. Pastas de Materiais (Sincronização em Nuvem Cross-Device)
@@ -2576,10 +2580,11 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
             } catch {}
           }
           if (row && row.key === "creative_folders_v1" && Array.isArray(row.value)) {
-            console.log(`[REALTIME] ⚡ Atualização instantânea de coleções de criativos e capas recebida do Supabase (${row.value.length} coleções).`);
-            setCreativeFoldersList(row.value);
+            const cleanList = row.value.filter((f: any) => f && f.id !== "cfolder-1795312968408");
+            console.log(`[REALTIME] ⚡ Atualização instantânea de coleções de criativos e capas recebida do Supabase (${cleanList.length} coleções).`);
+            setCreativeFoldersList(cleanList);
             try {
-              localStorage.setItem(STORAGE_KEYS.CREATIVE_FOLDERS, JSON.stringify(row.value));
+              localStorage.setItem(STORAGE_KEYS.CREATIVE_FOLDERS, JSON.stringify(cleanList));
             } catch {}
           }
           if (row && row.key === "material_folders_v1" && Array.isArray(row.value)) {
@@ -4284,18 +4289,20 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
   const updateCreativeFolder = async (id: string, data: { name?: string; description?: string; color?: string; icon?: string; coverImage?: string; driveUrl?: string }) => {
     let nextFolders: CreativeFolder[] = [];
     setCreativeFoldersList((prev) => {
-      const updated = prev.map((f) => {
-        if (f.id !== id) return f;
-        return {
-          ...f,
-          name: data.name?.trim() ?? f.name,
-          description: data.description?.trim() ?? f.description,
-          color: data.color ?? f.color,
-          icon: data.icon ?? f.icon,
-          coverImage: data.coverImage !== undefined ? data.coverImage?.trim() : f.coverImage,
-          driveUrl: data.driveUrl !== undefined ? data.driveUrl?.trim() : f.driveUrl,
-        };
-      });
+      const updated = prev
+        .map((f) => {
+          if (f.id !== id) return f;
+          return {
+            ...f,
+            name: data.name?.trim() ?? f.name,
+            description: data.description !== undefined ? data.description.trim() : f.description,
+            color: data.color ?? f.color,
+            icon: data.icon ?? f.icon,
+            coverImage: data.coverImage !== undefined ? data.coverImage?.trim() : f.coverImage,
+            driveUrl: data.driveUrl !== undefined ? data.driveUrl?.trim() : f.driveUrl,
+          };
+        })
+        .filter((f) => f && f.id !== "cfolder-1795312968408");
       nextFolders = updated;
       try {
         localStorage.setItem(STORAGE_KEYS.CREATIVE_FOLDERS, JSON.stringify(updated));
@@ -4305,11 +4312,15 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
 
     if (isSupabaseConfigured && supabase) {
       // 1. Grava no platform_settings (Garante que capas e nomes cheguem imediatamente ao celular e outros aparelhos)
-      supabase.from("platform_settings").upsert({
-        key: "creative_folders_v1",
-        value: nextFolders,
-        updated_at: new Date().toISOString(),
-      }).catch(() => {});
+      try {
+        await supabase.from("platform_settings").upsert({
+          key: "creative_folders_v1",
+          value: nextFolders.filter((f) => f && f.id !== "cfolder-1795312968408"),
+          updated_at: new Date().toISOString(),
+        });
+      } catch (err) {
+        console.warn("[AffiliateStore] Falha ao atualizar creative_folders_v1 em platform_settings:", err);
+      }
 
       try {
         const currentFolder = nextFolders.find((f) => f.id === id);
@@ -4337,7 +4348,7 @@ export function AffiliateStoreProvider({ children }: { children: React.ReactNode
     setCreativesList(updatedCreatives);
     localStorage.setItem(STORAGE_KEYS.CREATIVES, JSON.stringify(updatedCreatives));
 
-    const updated = creativeFoldersList.filter((f) => f.id !== id);
+    const updated = creativeFoldersList.filter((f) => f.id !== id && f.id !== "cfolder-1795312968408");
     setCreativeFoldersList(updated);
     localStorage.setItem(STORAGE_KEYS.CREATIVE_FOLDERS, JSON.stringify(updated));
 
